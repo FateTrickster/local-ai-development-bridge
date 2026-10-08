@@ -11,6 +11,7 @@ from bridge.file_service import FileService
 from bridge.patch_service import PatchService
 from bridge.pathguard import WorkspaceGuard
 from bridge.security import build_secure_mcp_app
+from bridge.task_service import TaskService
 from bridge.terminal_service import TerminalService
 
 settings = Settings.from_env()
@@ -18,6 +19,7 @@ guard = WorkspaceGuard(settings.workspace_root)
 files = FileService(settings, guard)
 patches = PatchService(settings, guard)
 terminal = TerminalService(settings, guard)
+tasks = TaskService()
 
 mcp = FastMCP("Local AI Development Bridge")
 
@@ -139,6 +141,31 @@ def wait(command_id: str, timeout_ms: int = 30_000) -> dict[str, Any]:
 def terminate_command(command_id: str, force: bool = False) -> dict[str, Any]:
     """Terminate a running PTY command."""
     return terminal.terminate(command_id, force)
+
+
+@mcp.tool()
+def set_todos(todos: list[dict[str, Any]]) -> dict[str, Any]:
+    """Replace the durable task snapshot; at most one todo may be in_progress."""
+    return tasks.set_todos(todos)
+
+
+@mcp.tool()
+def report_progress(
+    message: str,
+    todo_id: str | None = None,
+    current: int | None = None,
+    total: int | None = None,
+    phase: int | None = None,
+    phase_total: int | None = None,
+) -> dict[str, Any]:
+    """Append one durable progress event, optionally associated with the active todo."""
+    return tasks.report_progress(message, todo_id, current, total, phase, phase_total)
+
+
+@mcp.tool()
+def get_task_state() -> dict[str, Any]:
+    """Return the current durable todo snapshot and progress event count."""
+    return tasks.get_state()
 
 
 if __name__ == "__main__":
