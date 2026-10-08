@@ -1,125 +1,141 @@
 from __future__ import annotations
 
-import os
-import subprocess
-from pathlib import Path
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-ROOT = Path(os.environ.get("WORKSPACE_ROOT", Path.cwd().parent)).resolve()
-ALLOW_WRITE = os.environ.get("ALLOW_WRITE", "0") == "1"
-ALLOW_COMMANDS = os.environ.get("ALLOW_COMMANDS", "0") == "1"
+from bridge.config import Settings
+from bridge.file_service import FileService
+from bridge.patch_service import PatchService
+from bridge.pathguard import WorkspaceGuard
+from bridge.terminal_service import TerminalService
 
-mcp = FastMCP("Local Workspace MCP")
+settings = Settings.from_env()
+guard = WorkspaceGuard(settings.workspace_root)
+files = FileService(settings, guard)
+patches = PatchService(settings, guard)
+terminal = TerminalService(settings, guard)
 
-
-def safe_path(relative: str = ".") -> Path:
-    candidate = (ROOT / relative).resolve()
-    try:
-        candidate.relative_to(ROOT)
-    except ValueError as exc:
-        raise ValueError("Path escapes WORKSPACE_ROOT") from exc
-    return candidate
-
-
-@mcp.tool()
-def workspace_info() -> dict:
-    """Return the configured workspace root and permission state."""
-    return {
-        "workspace_root": str(ROOT),
-        "allow_write": ALLOW_WRITE,
-        "allow_commands": ALLOW_COMMANDS,
-    }
+mcp = FastMCP("Local AI Development Bridge")
 
 
 @mcp.tool()
-def list_directory(path: str = ".") -> list[dict]:
-    """List one directory inside the configured workspace."""
-    target = safe_path(path)
-    if not target.is_dir():
-        raise ValueError(f"Not a directory: {path}")
-    out = []
-    for item in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
-        out.append({
-            "name": item.name,
-            "path": str(item.relative_to(ROOT)).replace("\\", "/"),
-            "type": "directory" if item.is_dir() else "file",
-            "size": item.stat().st_size if item.is_file() else None,
-        })
-    return out
+def workspace_info() -> dict[str, Any]:
+    """Return workspace root, active permissions and bounded-output limits."""
+    return files.workspace_info()
 
 
 @mcp.tool()
-def read_file(path: str, start_line: int = 1, end_line: int | None = None) -> str:
-    """Read a UTF-8 text file with optional 1-based inclusive line range."""
-    target = safe_path(path)
-    if not target.is_file():
-        raise ValueError(f"Not a file: {path}")
-    text = target.read_text(encoding="utf-8")
-    lines = text.splitlines()
-    start = max(1, start_line) - 1
-    stop = len(lines) if end_line is None else min(len(lines), max(start_line, end_line))
-    return "\n".join(lines[start:stop])
+def list_directory(
+    path: str = ".",
+    cursor: str | None = None,
+    limit: int = 100,
+    include_hidden: bool = False,
+    include_ignored: bool = False,
+) -> dict[str, Any]:
+    """List one directory with stable name-based pagination."""
+    return files.list_directory(path, cursor, limit, include_hidden, include_ignored)
 
 
 @mcp.tool()
-def search_files(pattern: str, path: str = ".", max_results: int = 100) -> list[dict]:
-    """Search UTF-8 text files for a literal string."""
-    base = safe_path(path)
-    results: list[dict] = []
-    for file in base.rglob("*"):
-        if len(results) >= max_results:
-            break
-        if not file.is_file():
-            continue
-        try:
-            content = file.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
-            continue
-        for idx, line in enumerate(content.splitlines(), start=1):
-            if pattern in line:
-                results.append({
-                    "path": str(file.relative_to(ROOT)).replace("\\", "/"),
-                    "line": idx,
-                    "text": line[:500],
-                })
-                if len(results) >= max_results:
-                    break
-    return results
+def find_files(
+    patterns: list[str],
+    path: str = ".",
+    exclude: list[str] | None = None,
+    include_hidden: bool = False,
+    include_ignored: bool = False,
+    sort: str = "path_asc",
+    max_results: int = 100,
+) -> dict[str, Any]:
+    """Find workspace files by glob patterns with bounded results."""
+    return files.find_files(patterns, path, exclude, include_hidden, include_ignored, sort, max_results)
 
 
 @mcp.tool()
-def write_file(path: str, content: str) -> dict:
-    """Create or overwrite a UTF-8 text file when ALLOW_WRITE=1."""
-    if not ALLOW_WRITE:
-        raise PermissionError("Writes are disabled. Set ALLOW_WRITE=1 to enable.")
-    target = safe_path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
-    return {"path": str(target.relative_to(ROOT)).replace("\\", "/"), "bytes": len(content.encode("utf-8"))}
+def read_files(requests: list[dict[str, Any]]) -> dict[str, Any]:
+    """Read 1..20 UTF-8 files/ranges and return raw-byte SHA-256 versions."""
+    return files.read_files(requests)
 
 
 @mcp.tool()
-def run_command(command: str, cwd: str = ".", timeout_seconds: int = 120) -> dict:
-    """Run a shell command inside the workspace when ALLOW_COMMANDS=1."""
-    if not ALLOW_COMMANDS:
-        raise PermissionError("Command execution is disabled. Set ALLOW_COMMANDS=1 to enable.")
-    workdir = safe_path(cwd)
-    if not workdir.is_dir():
-        raise ValueError(f"Not a directory: {cwd}")
-    completed = subprocess.run(
-        command,
-        cwd=workdir,
-        shell=True,
-        capture_output=True,
-        text=True,
-        timeout=max(1, min(timeout_seconds, 120)),
+def read_file(path: str, start_line: int = 1, end_line: int | None = None) -> dict[str, Any]:
+    """Compatibility single-file reader with SHA-256 version metadata."""
+    return files.read_file(path, start_line, end_line)
+
+
+@mcp.tool()
+def search_files(
+    pattern: str,
+    path: str = ".",
+    glob: list[str] | None = None,
+    regex: bool = False,
+    case_sensitive: bool = True,
+    context_lines: int = 1,
+    max_results: int = 100,
+    max_per_file: int = 20,
+    include_hidden: bool = False,
+    include_ignored: bool = False,
+) -> dict[str, Any]:
+    """Search UTF-8 text by literal text or regex with bounded context and results."""
+    return files.search_files(
+        pattern,
+        path,
+        glob,
+        regex,
+        case_sensitive,
+        context_lines,
+        max_results,
+        max_per_file,
+        include_hidden,
+        include_ignored,
     )
-    return {
-        "exit_code": completed.returncode,
-        "stdout": completed.stdout[-20000:],
-        "stderr": completed.stderr[-20000:],
-    }
+
+
+@mcp.tool()
+def write_file(path: str, content: str, expected_version: str | None = None) -> dict[str, Any]:
+    """Create/overwrite UTF-8 text when writes are enabled; optionally enforce a SHA-256 expected version."""
+    return files.write_file(path, content, expected_version)
+
+
+@mcp.tool()
+def apply_patch(patch: str, expected_versions: dict[str, str | None]) -> dict[str, Any]:
+    """Apply a validated multi-file unified diff transaction using optimistic version checks."""
+    return patches.apply_patch(patch, expected_versions)
+
+
+@mcp.tool()
+def run_command(
+    command: str,
+    cwd: str = ".",
+    background: bool = False,
+    timeout_ms: int = 120_000,
+) -> dict[str, Any]:
+    """Run a command in a persistent native PTY; timeout only bounds this call's wait."""
+    return terminal.run_command(command, cwd, background, timeout_ms)
+
+
+@mcp.tool()
+def get_command_output(command_id: str, offset: int = 0, max_bytes: int = 32_768) -> dict[str, Any]:
+    """Read incremental terminal output using absolute UTF-8 byte offsets."""
+    return terminal.get_command_output(command_id, offset, max_bytes)
+
+
+@mcp.tool()
+def send_command_input(command_id: str, input: str, append_newline: bool = True) -> dict[str, Any]:
+    """Send interactive UTF-8 input to a running PTY command."""
+    return terminal.send_command_input(command_id, input, append_newline)
+
+
+@mcp.tool()
+def wait(command_id: str, timeout_ms: int = 30_000) -> dict[str, Any]:
+    """Wait for terminal completion or new output without terminating the underlying process."""
+    return terminal.wait(command_id, timeout_ms)
+
+
+@mcp.tool()
+def terminate_command(command_id: str, force: bool = False) -> dict[str, Any]:
+    """Terminate a running PTY command."""
+    return terminal.terminate(command_id, force)
 
 
 if __name__ == "__main__":
