@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
+import uvicorn
 from mcp.server.fastmcp import FastMCP
 
 from bridge.config import Settings
 from bridge.file_service import FileService
 from bridge.patch_service import PatchService
 from bridge.pathguard import WorkspaceGuard
+from bridge.security import build_secure_mcp_app
 from bridge.terminal_service import TerminalService
 
 settings = Settings.from_env()
@@ -139,4 +142,9 @@ def terminate_command(command_id: str, force: bool = False) -> dict[str, Any]:
 
 
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http")
+    app, token = build_secure_mcp_app(mcp)
+    host = os.environ.get("BRIDGE_HOST", "127.0.0.1")
+    port = int(os.environ.get("BRIDGE_PORT", "8000"))
+    print(f"Local MCP endpoint: http://{host}:{port}/{token}/mcp")
+    print("The token is a capability secret. Do not publish or commit it.")
+    uvicorn.run(app, host=host, port=port, log_level="info")
