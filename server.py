@@ -82,6 +82,33 @@ def _observed(
     return result
 
 
+def _require_workspace_permission(context: Any, permission: str) -> None:
+    if permission == "write":
+        allowed = bool(context.settings.allow_write)
+        error = f"WRITES_DISABLED_FOR_WORKSPACE: {context.workspace_id}"
+    elif permission == "command":
+        allowed = bool(context.settings.allow_commands)
+        error = f"COMMANDS_DISABLED_FOR_WORKSPACE: {context.workspace_id}"
+    else:
+        raise ValueError(f"UNKNOWN_WORKSPACE_PERMISSION: {permission}")
+    if allowed:
+        return
+    activity.emit(
+        "workspace_policy_denied",
+        status="denied",
+        title=f"Workspace policy denied {permission}",
+        component="workspace_policy",
+        details={
+            "workspace_id": context.workspace_id,
+            "permission": permission,
+            "policy_mode": context.policy_mode,
+            "global_allow_write": registry.base_settings.allow_write,
+            "global_allow_commands": registry.base_settings.allow_commands,
+        },
+    )
+    raise PermissionError(error)
+
+
 def _approval_gate(
     enabled: bool,
     approval_id: str | None,
@@ -283,6 +310,7 @@ def write_file(
 ) -> dict[str, Any]:
     """Create/overwrite UTF-8 text in one workspace; optionally requires approval."""
     context = registry.get(workspace_id)
+    _require_workspace_permission(context, "write")
     content_bytes = content.encode("utf-8")
     gate = _approval_gate(
         settings.confirm_writes,
@@ -327,6 +355,7 @@ def apply_patch(
 ) -> dict[str, Any]:
     """Apply a validated multi-file unified diff inside one workspace."""
     context = registry.get(workspace_id)
+    _require_workspace_permission(context, "write")
     gate = _approval_gate(
         settings.confirm_writes,
         approval_id,
@@ -381,6 +410,7 @@ def run_command(
 ) -> dict[str, Any]:
     """Run a command in the selected workspace PTY; optionally requires approval."""
     context = registry.get(workspace_id)
+    _require_workspace_permission(context, "command")
     gate = _approval_gate(
         settings.confirm_commands,
         approval_id,

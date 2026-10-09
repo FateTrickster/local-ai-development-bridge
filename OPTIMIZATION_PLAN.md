@@ -510,3 +510,46 @@ Launcher 新增可重复参数：
 - `P6_MULTI_WORKSPACE_SMOKE_OK`。
 
 下一阶段建议：工作区级权限策略（例如某 workspace 只读、另一个允许命令）、进程树/CPU/内存统计，以及 Dashboard 的 workspace 过滤器。
+
+## 14. P7 工作区级权限策略实施结果（2026-10-09）
+
+P6 建立显式 workspace_id 后，本阶段继续把权限边界下沉到 workspace context，避免“一个全局 full 权限让所有挂载目录都拥有同样副作用能力”。
+
+### 14.1 权限模型
+
+全局 `ALLOW_WRITE` / `ALLOW_COMMANDS` 保持硬上限。每个 extra workspace 可声明 `allow_write` / `allow_commands`，最终有效权限为：
+
+```text
+effective = global_permission AND (workspace_requested_permission if explicitly set else true)
+```
+
+未声明时继承全局。Launcher 将用户友好的模式映射为策略：`inherit`、`readonly`、`write`、`command`、`full`。即使 workspace 请求 `full`，也不能把全局关闭的权限重新打开。
+
+### 14.2 执行与审批顺序
+
+`write_file`、`apply_patch`、`run_command` 在进入 approval gate 之前先检查 selected workspace 的 effective permission。被策略禁止时直接返回 `WRITES_DISABLED_FOR_WORKSPACE` 或 `COMMANDS_DISABLED_FOR_WORKSPACE`，并写入 `workspace_policy_denied` Activity。这样 Dashboard 不会出现一个实际上无法执行的无效审批请求。
+
+Approval fingerprint 继续包含 workspace_id，因此同样参数在不同 workspace 也被视为不同副作用请求。
+
+### 14.3 Launcher 与 Dashboard
+
+Launcher 新增可重复参数：
+
+```text
+--workspace-policy ID=MODE
+```
+
+其中 MODE 为 `inherit|readonly|write|command|full`。未知 workspace、重复 policy 和非法 mode 会在 preflight 阶段失败。
+
+Dashboard Workspaces 页显示 policy mode、effective write/command permissions 与 global ceiling。
+
+### 14.4 验证
+
+- Python tests：75/75 通过；
+- Registry 测试覆盖 readonly/write 策略与“global readonly + workspace full 仍然不可提升”的硬上限；
+- Launcher policy 解析、未知 ID、重复策略、非法 mode 测试通过；
+- 真实 MCP policy smoke：3 个 workspace；readonly workspace 的 write/command 均在 approval 前被拒绝，write-only workspace 的 command 被拒绝而 write 正常进入 approval gate；仅产生 1 个真实可执行审批请求；
+- Activity 出现 3 条 `workspace_policy_denied`；
+- Launcher `--workspace-policy docs=readonly` 真机 local E2E 启动通过，24 tools initialize/tools-list smoke 通过。
+
+下一阶段：进程树/CPU/内存可观察性，以及 Dashboard workspace/event 过滤与检索。

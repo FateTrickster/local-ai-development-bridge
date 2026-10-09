@@ -123,5 +123,50 @@ class LauncherHelperTests(unittest.TestCase):
             self.assertFalse(launcher._port_available("127.0.0.1", port))
 
 
+    def test_workspace_policy_modes_are_serialized(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            default = root / "default"
+            docs = root / "docs"
+            code = root / "code"
+            default.mkdir()
+            docs.mkdir()
+            code.mkdir()
+            args = argparse.Namespace(
+                workspace=str(default),
+                extra_workspace=[f"docs={docs}", f"code={code}"],
+                workspace_policy=["docs=readonly", "code=write"],
+                readonly=False,
+                bridge_port=8123,
+                dashboard_port=8877,
+                confirm_writes=False,
+                confirm_commands=False,
+                approval_ttl=300,
+            )
+            specs = launcher._extra_workspace_specs(args)
+            by_id = {item["id"]: item for item in specs}
+            self.assertEqual(by_id["docs"]["policy_mode"], "readonly")
+            self.assertFalse(by_id["docs"]["allow_write"])
+            self.assertFalse(by_id["docs"]["allow_commands"])
+            self.assertEqual(by_id["code"]["policy_mode"], "write")
+            self.assertTrue(by_id["code"]["allow_write"])
+            self.assertFalse(by_id["code"]["allow_commands"])
+
+    def test_workspace_policy_rejects_unknown_duplicate_and_invalid_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            default = root / "default"
+            docs = root / "docs"
+            default.mkdir()
+            docs.mkdir()
+            base = dict(workspace=str(default), extra_workspace=[f"docs={docs}"])
+            with self.assertRaisesRegex(ValueError, "WORKSPACE_POLICY_UNKNOWN_ID"):
+                launcher._extra_workspace_specs(argparse.Namespace(**base, workspace_policy=["missing=readonly"]))
+            with self.assertRaisesRegex(ValueError, "DUPLICATE_WORKSPACE_POLICY"):
+                launcher._extra_workspace_specs(argparse.Namespace(**base, workspace_policy=["docs=readonly", "docs=full"]))
+            with self.assertRaisesRegex(ValueError, "INVALID_WORKSPACE_POLICY"):
+                launcher._extra_workspace_specs(argparse.Namespace(**base, workspace_policy=["docs=superuser"]))
+
+
 if __name__ == "__main__":
     unittest.main()
