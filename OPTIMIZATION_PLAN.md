@@ -560,7 +560,7 @@ Dashboard Workspaces 页显示 policy mode、effective write/command permissions
 
 ### 15.1 默认页面只展示四类信息
 
-1. **AI 输出**：近 1 min / 5 min 输出 token 数，以及最近一次输出 TPS；
+1. **AI / MCP 活动**：近 1 min / 5 min MCP 操作量、最近活动时间与活跃状态；
 2. **阶段用时**：大目标、分目标、小目标的实时用时；
 3. **任务规划与分级**：持久化任务树，当前正在处理的最细分支标绿；
 4. **文件变更**：新增 / 修改 / 删除文件、workspace、相对路径与完整绝对地址。
@@ -575,15 +575,21 @@ Dashboard Workspaces 页显示 policy mode、effective write/command permissions
 - 文件变更来自结构化 `file_changed` Activity，并额外读取 workspace 内 Git worktree 状态，从而覆盖通过终端脚本造成的未提交修改；
 - Dashboard 每 1.5 秒读取 `/api/focus`，不需要模型主动修改 HTML。
 
-### 15.3 AI 输出量 / TPS 的边界
+### 15.3 AI / MCP 活动流量计
 
-MCP Server 本身不会收到 ChatGPT 助手的 token streaming，因此不能从普通 MCP tool traffic 得到官方精确 TPS。当前策略调整为：**允许为了状态反馈提供近似值，但必须明确标记为估算，不能冒充官方 usage。**
+实践中确认：长任务执行时 ChatGPT 网页通常不会持续生成可见 assistant 正文，因此基于网页 DOM 的 token/TPS 估算不能反映真正的工作过程，该方案已撤销。默认 Dashboard 改为直接统计 Bridge 自身能够可靠观察到的 MCP 活动。
 
-`AITelemetryService` 与 `.runtime/ai-output.jsonl` 继续负责 1 min / 5 min 聚合。新增 `browser-telemetry/` Chrome / Edge 扩展，在 ChatGPT 网页侧观察最新 assistant 消息的文本增长，并采用非常简单的启发式：CJK 字符约按 1 token / 字符，其他非空白字符约按 4 字符 / token。扩展约每 1.2 秒发送新增估算 token 与时长，因此默认 Dashboard 可以持续出现一个“≈ TPS”数字。
+`ActivityService.activity_metrics()` 从程序自动产生的 Activity 事件计算：
 
-浏览器扩展只发送数字增量与耗时，不发送 assistant 正文。Dashboard 的 `/api/session` 提供独立 ephemeral `telemetry_token`；扩展用该 token 向 localhost-only `/api/telemetry/ai-output` 上报，和审批用的 Dashboard token 分离。扩展自动探测 `8766`–`8776` 端口。
+- 近 1 分钟 `tool_started` MCP 操作数；
+- 近 5 分钟 MCP 操作数；
+- 近 5 分钟平均操作速率；
+- 最近一条结构化活动距离当前的时间；
+- `active`（15 秒内）、`recent`（60 秒内）、`idle` / `no_activity` 状态。
 
-若未来宿主客户端能够提供官方 `output_tokens` / usage，则仍可向同一接口提交精确数据；Dashboard 会根据 source 区分“估算 / 实测”。因此这个方案的目的只是让用户看到持续变化的速度数字并确认系统仍在工作，而不是用于计费或性能基准。
+操作量只统计 MCP `tool_started`，避免 start/completed 成对事件重复计数；“最近活动”允许来自 command completed、file changed 等结构化事件，从而能看到后台工作刚刚结束。该指标只用于确认 Local Bridge 是否仍有可观察工作发生，不声称能够测量模型内部思考速度。
+
+这种方案完全由程序驱动，不需要浏览器扩展、不依赖 Prompt，也不会因为更换 ChatGPT 对话而失效。原 `AITelemetryService` 保留为未来官方 usage 数据源的兼容接口，但不参与默认状态视图。
 
 ### 15.4 文件变更投影
 
@@ -592,7 +598,7 @@ MCP Server 本身不会收到 ChatGPT 助手的 token streaming，因此不能�
 ### 15.5 当前验收
 
 - 层级任务与阶段计时专项测试通过；
-- AI telemetry 1 min / 5 min / TPS 统计测试通过；
+- MCP Activity 近 1 min / 5 min 操作量、最近活动与活跃状态统计测试通过；
 - 默认 Dashboard `/api/focus`、高级页面与审批接口兼容测试通过；
 - 默认页面 JavaScript 语法检查通过；
-- 完整 Python 回归 84/84 通过；`compileall`、Dashboard JavaScript syntax check、Secret Scan、VS Code Companion compile 均通过。
+- 完整 Python 回归 92/92 通过；`compileall`、Dashboard JavaScript syntax check、Secret Scan、VS Code Companion compile 均通过。

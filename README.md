@@ -260,16 +260,16 @@ version: sha256:...
 
 默认 `http://127.0.0.1:8766/` 现在只显示四类信息：
 
-- AI 近 1 min / 5 min 输出 token 数与 TPS；
+- 近 1 min / 5 min MCP 操作量、最近一次可观察活动及活跃状态；
 - 大目标 / 分目标 / 小目标阶段用时；
 - 任务树与当前最细 active leaf（绿色）；
 - 新增 / 修改 / 删除文件及完整绝对地址。
 
 任务层级通过 todo 的可选 `parent_id` 持久化；活动分支可以是同一祖先链上的多个 `in_progress` 项。阶段开始/完成时间由 `TaskService` 保存，因此页面刷新或换对话后仍可继续计算。
 
-AI token streaming **不能从普通 MCP tool traffic 自动得到**。为了让默认页面持续有一个直观的速度数字，仓库提供了 `browser-telemetry/` Chrome / Edge 扩展：它观察 ChatGPT 网页 assistant 文本增长，用“CJK 字符约 1 token、其他非空白字符约 4 字符/token”的简单启发式估算新增 token，并约每 1.2 秒发送一个增量到 localhost-only `/api/telemetry/ai-output`。Dashboard 对这类数据明确显示 `≈` / “估算”，用于状态反馈而不是计费或性能基准。
+默认页不再尝试估算 ChatGPT 的 token/TPS。原因是长任务执行期间网页通常不会持续输出 assistant 正文，而 MCP 才是本地 Bridge 真正能够稳定观察到的工作通道。`ActivityService.activity_metrics()` 直接基于程序自动产生的结构化事件统计：近 1 分钟 MCP 操作数、近 5 分钟 MCP 操作数、5 分钟平均操作速率、最近活动时间以及 active/recent/idle 状态。
 
-安装方式：打开 `edge://extensions/` 或 `chrome://extensions/`，开启开发人员模式，选择“加载解压缩的扩展”，然后选择仓库中的 `browser-telemetry` 目录并刷新 ChatGPT 网页。扩展自动探测 Dashboard 端口 `8766`–`8776`，无需手工填写 token。遥测数据仍落到 `.runtime/ai-output.jsonl`。
+这里的“活动”用于回答“任务是否仍在推进”，不会声称能够观察模型内部思考。它不依赖浏览器扩展、Prompt、当前对话或模型主动上报，因此换对话后仍然有效。`AITelemetryService` 仍保留给未来真正能提供官方 usage 的客户端，但不再作为默认 Dashboard 的状态依据。
 
 此前完整的 Activity / Terminal / Workspace / Approval / Launcher / VS Code 控制台仍保留在：
 

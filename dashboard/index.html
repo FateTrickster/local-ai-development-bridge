@@ -73,13 +73,13 @@
   </div>
 
   <section class="panel section">
-    <div class="section-head"><h2>AI 输出</h2><span class="small" id="ai-source">等待遥测</span></div>
+    <div class="section-head"><h2>AI / MCP 活动</h2><span class="small" id="activity-state">等待活动</span></div>
     <div class="grid3">
-      <div class="metric"><div class="label">近 1 min 输出量（约）</div><div class="value" id="ai-1m">—</div><div class="detail" id="ai-1m-detail">—</div></div>
-      <div class="metric"><div class="label">近 5 min 输出量（约）</div><div class="value" id="ai-5m">—</div><div class="detail" id="ai-5m-detail">—</div></div>
-      <div class="metric"><div class="label">输出速度（约 TPS）</div><div class="value" id="ai-tps">—</div><div class="detail" id="ai-tps-detail">—</div></div>
+      <div class="metric"><div class="label">近 1 min MCP 操作</div><div class="value" id="activity-1m">0 次</div><div class="detail" id="activity-1m-detail">—</div></div>
+      <div class="metric"><div class="label">近 5 min MCP 操作</div><div class="value" id="activity-5m">0 次</div><div class="detail" id="activity-5m-detail">—</div></div>
+      <div class="metric"><div class="label">最近活动</div><div class="value" id="activity-latest">—</div><div class="detail" id="activity-latest-detail">—</div></div>
     </div>
-    <div class="notice" id="ai-note">尚未接入浏览器流量计。安装 browser-telemetry 后，这里会显示一个近似输出速度。</div>
+    <div class="notice">只统计 Local Bridge 能看到的 MCP / 终端活动，用于确认任务是否仍在推进；不代表模型内部思考速度。</div>
   </section>
 
   <section class="panel section">
@@ -129,19 +129,27 @@
     const d=new Date(value); return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
   };
 
-  function renderAI(ai){
-    const available=Boolean(ai && ai.available);
-    const estimated=String(ai&&ai.source||'').includes('estimate');
-    const prefix=estimated?'≈ ':'';
-    const one=ai&&ai.one_minute||{}; const five=ai&&ai.five_minutes||{};
-    setText('ai-1m', available ? prefix+fmtTokens(one.output_tokens) : '未接入');
-    setText('ai-5m', available ? prefix+fmtTokens(five.output_tokens) : '未接入');
-    setText('ai-tps', available && ai.latest_tps!=null ? `${prefix}${Number(ai.latest_tps).toFixed(1)} tok/s` : '未接入');
-    setText('ai-1m-detail', available ? `${one.events||0} 次输出 · 平均 ${one.avg_tps==null?'—':(estimated?'≈ ':'')+Number(one.avg_tps).toFixed(1)+' tok/s'}` : '等待浏览器流量计');
-    setText('ai-5m-detail', available ? `${five.events||0} 次输出 · 平均 ${five.avg_tps==null?'—':(estimated?'≈ ':'')+Number(five.avg_tps).toFixed(1)+' tok/s'}` : '等待浏览器流量计');
-    setText('ai-tps-detail', available ? `最近更新 ${fmtTime(ai.latest_at)||'—'}` : '安装 browser-telemetry 后自动显示');
-    setText('ai-source', available ? `${estimated?'估算':'实测'} · ${ai.state||'live'} · ${ai.source||'client'}` : '未接入浏览器流量计');
-    const note=$('ai-note'); note.hidden=available; if(!available) note.textContent='尚未接入浏览器流量计。安装 browser-telemetry 后，这里会显示一个近似输出速度。';
+  function fmtAge(seconds){
+    const n=Number(seconds); if(!Number.isFinite(n)) return '—';
+    if(n < 1) return '刚刚';
+    if(n < 60) return `${Math.floor(n)} 秒前`;
+    if(n < 3600) return `${Math.floor(n/60)} 分钟前`;
+    return `${Math.floor(n/3600)} 小时前`;
+  }
+
+  function renderActivity(metrics){
+    const one=Number(metrics&&metrics.one_minute_operations||0);
+    const five=Number(metrics&&metrics.five_minute_operations||0);
+    setText('activity-1m', `${one} 次`);
+    setText('activity-5m', `${five} 次`);
+    setText('activity-1m-detail', one ? `${one} 次 / min` : '最近 1 分钟暂无 MCP 操作');
+    setText('activity-5m-detail', five ? `平均 ${Number(metrics.five_minute_average_per_minute||0).toFixed(1)} 次 / min` : '最近 5 分钟暂无 MCP 操作');
+    setText('activity-latest', metrics&&metrics.available ? fmtAge(metrics.latest_age_seconds) : '暂无');
+    const label=(metrics&&metrics.latest_tool)||(metrics&&metrics.latest_component)||(metrics&&metrics.latest_type)||'—';
+    const title=metrics&&metrics.latest_title||'';
+    setText('activity-latest-detail', metrics&&metrics.available ? `${label}${title?' · '+title:''}` : '尚无可观察活动');
+    const states={active:'● 活跃',recent:'● 最近有活动',idle:'○ 暂无新活动',no_activity:'○ 尚无活动'};
+    setText('activity-state', states[metrics&&metrics.state]||'等待活动');
   }
 
   function renderStages(task){
@@ -194,7 +202,7 @@
   }
 
   let lastState=null;
-  function render(state){ lastState=state; renderAI(state.ai_output||{}); renderStages(state.task||{}); renderTree(state.task||{}); renderFiles(state.file_changes||{}); }
+  function render(state){ lastState=state; renderActivity(state.activity_metrics||{}); renderStages(state.task||{}); renderTree(state.task||{}); renderFiles(state.file_changes||{}); }
   async function refresh(){
     try{
       const res=await fetch('/api/focus',{cache:'no-store'}); if(!res.ok) throw new Error(`HTTP ${res.status}`); const state=await res.json(); render(state);
