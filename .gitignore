@@ -5,3 +5,7 @@ __pycache__/
 .runtime/
 .audit/
 _probe/
+_probe_public.py
+node_modules/
+vscode-companion/dist/
+*.vsix

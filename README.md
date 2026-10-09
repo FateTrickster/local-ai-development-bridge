@@ -60,6 +60,44 @@ https://xxxx.trycloudflare.com/<capability-token>/mcp
 
 身份验证可以选择“无身份验证”，因为 Token 已经包含在能力 URL 中。支持自定义 Authorization Header 的客户端也可以直接访问 `/mcp` 并发送 `Authorization: Bearer <capability-token>`。
 
+### 隧道主机必须加入 Host 白名单
+
+`mcp` 库在服务绑定到 `127.0.0.1` 时会自动启用 DNS rebinding 保护，默认白名单仅含
+`127.0.0.1` / `localhost` / `[::1]`。经 Quick Tunnel 访问时 `Host` 头是
+`xxxx.trycloudflare.com`，不在白名单内，请求会被拒绝为：
+
+```text
+HTTP 421 Misdirected Request
+```
+
+解决办法是把隧道主机名加入白名单（保护保持开启，不要关闭）：
+
+```powershell
+$env:BRIDGE_ALLOWED_HOSTS = "xxxx.trycloudflare.com"
+```
+
+启动时可同时指定多个主机与来源：
+
+```powershell
+$env:BRIDGE_ALLOWED_HOSTS   = "xxxx.trycloudflare.com,another.example.com"
+$env:BRIDGE_ALLOWED_ORIGINS = "https://xxxx.trycloudflare.com"
+```
+
+未设置时行为与库默认一致（仅允许本机）。**Quick Tunnel 每次重建都会换域名，域名变化后需要重新设置该变量并重启服务。**
+
+## 环境变量
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `WORKSPACE_ROOT` | 当前目录的上级 | 工作区根，所有路径不得越出 |
+| `ALLOW_WRITE` | `0` | 是否允许 `write_file` / `apply_patch` |
+| `ALLOW_COMMANDS` | `0` | 是否允许 `run_command` |
+| `BRIDGE_HOST` | `127.0.0.1` | 监听地址 |
+| `BRIDGE_PORT` | `8000` | 监听端口 |
+| `BRIDGE_TOKEN` | 空 | 覆盖持久 capability Token（默认从 `.runtime/access-token.txt` 读取或生成） |
+| `BRIDGE_ALLOWED_HOSTS` | 空 | 追加到 DNS rebinding 保护的 Host 白名单 |
+| `BRIDGE_ALLOWED_ORIGINS` | 空 | 追加到 DNS rebinding 保护的 Origin 白名单 |
+
 ## 权限
 
 `start-readonly.cmd`：
@@ -90,10 +128,23 @@ version: sha256:...
 - `.audit/requests.jsonl`：HTTP 审计日志，已被 `.gitignore` 排除；
 - PTY 单命令输出缓冲默认最多 4 MiB，并使用绝对 UTF-8 字节 offset 增量读取。
 
+## VS Code Companion
+
+P1 Companion 已实现服务端桥接与 VS Code 扩展源码。Bridge 暴露 `vscode_health`、`get_diagnostics`、`lsp`、`read_editor_buffer` 四个 IDE 语义工具。
+
+扩展位于 `vscode-companion/`。开发构建：
+
+```bat
+cd vscode-companion
+npm run compile
+```
+
+Companion 只监听 `127.0.0.1`，并使用本机持久 Token 保护 Bridge → VS Code 的 HTTP 调用。若扩展未运行，相关 MCP 工具返回 `VSCODE_COMPANION_NOT_RUNNING`，不会把缺失的 IDE 语义伪装成空结果。
+
 ## 测试
 
 ```bat
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-当前路线见 `ROADMAP.md`。下一阶段是 VS Code Companion（diagnostics、dirty buffer、LSP 语义）和任务进度系统。
+当前路线见 `ROADMAP.md`。P0、任务状态和 VS Code Companion 代码已落地；下一步是完成 Companion 真机运行验收，并进入启动/状态管理、稳定公网入口等 P2 产品化工作。

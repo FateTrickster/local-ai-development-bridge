@@ -1,0 +1,42 @@
+{
+  "name": "local-ai-development-bridge-vscode",
+  "displayName": "Local AI Development Bridge Companion",
+  "description": "Exposes VS Code diagnostics, dirty buffers and language-provider semantics to the local AI Development Bridge over localhost.",
+  "version": "0.1.0",
+  "publisher": "local-ai-bridge",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "localAiBridge.showCompanionStatus",
+        "title": "Local AI Bridge: Show Companion Status"
+      }
+    ],
+    "configuration": {
+      "title": "Local AI Development Bridge",
+      "properties": {
+        "localAiBridge.companionPort": {
+          "type": "number",
+          "default": 8765,
+          "minimum": 1024,
+          "maximum": 65500,
+          "description": "Preferred localhost port for the VS Code companion. The extension tries the next 10 ports if occupied."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p ."
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.100.0",
+    "typescript": "^5.9.0"
+  }
+}

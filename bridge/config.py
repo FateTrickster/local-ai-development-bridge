@@ -23,6 +23,12 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, value))
 
 
+def _env_list(name: str) -> list[str]:
+    """Parse a comma-separated environment variable into a trimmed list."""
+    raw = os.environ.get(name, "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
 @dataclass(frozen=True)
 class Settings:
     workspace_root: Path
@@ -32,10 +38,16 @@ class Settings:
     max_search_results: int
     max_search_bytes: int
     max_directory_entries: int
+    bridge_host: str = "127.0.0.1"
+    bridge_port: int = 8000
+    allowed_hosts: tuple[str, ...] = ()
+    allowed_origins: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls) -> "Settings":
         default_root = Path.cwd().parent
+        bridge_host = os.environ.get("BRIDGE_HOST", "127.0.0.1")
+        bridge_port = _env_int("BRIDGE_PORT", 8000, 1, 65_535)
         return cls(
             workspace_root=Path(os.environ.get("WORKSPACE_ROOT", default_root)).resolve(),
             allow_write=_env_bool("ALLOW_WRITE", False),
@@ -44,4 +56,8 @@ class Settings:
             max_search_results=_env_int("MAX_SEARCH_RESULTS", 500, 1, 10_000),
             max_search_bytes=_env_int("MAX_SEARCH_BYTES", 262_144, 4_096, 8_388_608),
             max_directory_entries=_env_int("MAX_DIRECTORY_ENTRIES", 500, 1, 10_000),
+            bridge_host=bridge_host,
+            bridge_port=bridge_port,
+            allowed_hosts=tuple(_env_list("BRIDGE_ALLOWED_HOSTS")),
+            allowed_origins=tuple(_env_list("BRIDGE_ALLOWED_ORIGINS")),
         )

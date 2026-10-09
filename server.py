@@ -5,6 +5,7 @@ from typing import Any
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from bridge.config import Settings
 from bridge.file_service import FileService
@@ -13,6 +14,7 @@ from bridge.pathguard import WorkspaceGuard
 from bridge.security import build_secure_mcp_app
 from bridge.task_service import TaskService
 from bridge.terminal_service import TerminalService
+from bridge.vscode_service import VSCodeService
 
 settings = Settings.from_env()
 guard = WorkspaceGuard(settings.workspace_root)
@@ -20,8 +22,24 @@ files = FileService(settings, guard)
 patches = PatchService(settings, guard)
 terminal = TerminalService(settings, guard)
 tasks = TaskService()
+vscode_service = VSCodeService(settings, guard)
 
-mcp = FastMCP("Local AI Development Bridge")
+# FastMCP auto-enables DNS rebinding protection when bound to localhost, but its
+# default allowlist only contains 127.0.0.1/localhost/[::1]. A Quick Tunnel reaches
+# us with the public tunnel hostname in the Host header, which would be rejected
+# with HTTP 421 Misdirected Request. BRIDGE_ALLOWED_HOSTS adds the tunnel host to
+# the allowlist while keeping the localhost protection intact. When unset we pass
+# None so the library behaviour is unchanged.
+if settings.allowed_hosts or settings.allowed_origins:
+    transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", *settings.allowed_hosts],
+        allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*", *settings.allowed_origins],
+    )
+else:
+    transport_security = None
+
+mcp = FastMCP("Local AI Development Bridge", transport_security=transport_security)
 
 
 @mcp.tool()
@@ -168,10 +186,61 @@ def get_task_state() -> dict[str, Any]:
     return tasks.get_state()
 
 
+@mcp.tool()
+def vscode_health() -> dict[str, Any]:
+    """Return VS Code Companion readiness, workspace roots and open-document state."""
+    return vscode_service.health()
+
+
+@mcp.tool()
+def get_diagnostics(
+    path: str | None = None,
+    severity: list[str] | None = None,
+    max_results: int = 100,
+) -> dict[str, Any]:
+    """Read live VS Code diagnostics, including dirty editor state when available."""
+    return vscode_service.get_diagnostics(path, severity, max_results)
+
+
+@mcp.tool()
+def lsp(
+    operation: str,
+    path: str | None = None,
+    line: int | None = None,
+    column: int | None = None,
+    query: str | None = None,
+    include_declaration: bool = True,
+    max_results: int = 100,
+) -> dict[str, Any]:
+    """Query VS Code language providers for symbols, definitions, references, implementations or hover data."""
+    return vscode_service.lsp(
+        operation,
+        path,
+        line,
+        column,
+        query,
+        include_declaration,
+        max_results,
+    )
+
+
+@mcp.tool()
+def read_editor_buffer(
+    path: str,
+    start_line: int = 1,
+    end_line: int | None = None,
+    max_bytes: int = 262_144,
+) -> dict[str, Any]:
+    """Read the current VS Code text buffer, including unsaved edits, with bounded output."""
+    return vscode_service.read_editor_buffer(path, start_line, end_line, max_bytes)
+
+
 if __name__ == "__main__":
     app, token = build_secure_mcp_app(mcp)
-    host = os.environ.get("BRIDGE_HOST", "127.0.0.1")
-    port = int(os.environ.get("BRIDGE_PORT", "8000"))
+    host = settings.bridge_host
+    port = settings.bridge_port
     print(f"Local MCP endpoint: http://{host}:{port}/{token}/mcp")
+    if settings.allowed_hosts:
+        print(f"Extra allowed Host headers: {', '.join(settings.allowed_hosts)}")
     print("The token is a capability secret. Do not publish or commit it.")
     uvicorn.run(app, host=host, port=port, log_level="info")
