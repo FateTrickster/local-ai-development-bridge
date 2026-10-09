@@ -148,3 +148,8 @@ ready / supervise children
 ## 7. Focused Dashboard projection
 
 默认 Dashboard 不是 Activity 原始日志浏览器，而是一个只读投影层：`AITelemetryService + TaskService + Activity/Git file changes -> DashboardService.focus_snapshot() -> /api/focus -> dashboard/index.html`。完整 observability/control plane 保留在 `/advanced.html`。AI token telemetry 只有在兼容本地 client 自动提交 exact usage 时才显示，MCP Bridge 不做 Prompt 驱动的估算。
+
+
+## Desktop completion notification
+
+`set_todos` writes the durable task snapshot first, then `DesktopNotificationService` evaluates whether every task is `completed`. The service computes a stable completion signature, persists the last notified signature under `.runtime/desktop-notification-state.json`, and launches the platform notification backend asynchronously. This keeps completion alerts independent of prompt wording or chat continuity and avoids duplicate popups after retries or Bridge restarts.

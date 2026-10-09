@@ -47,6 +47,7 @@ class Settings:
     confirm_writes: bool = False
     confirm_commands: bool = False
     approval_ttl_seconds: int = 300
+    desktop_notifications_enabled: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -70,4 +71,5 @@ class Settings:
             confirm_writes=_env_bool("BRIDGE_CONFIRM_WRITES", False),
             confirm_commands=_env_bool("BRIDGE_CONFIRM_COMMANDS", False),
             approval_ttl_seconds=_env_int("BRIDGE_APPROVAL_TTL_SECONDS", 300, 30, 3600),
+            desktop_notifications_enabled=_env_bool("BRIDGE_DESKTOP_NOTIFICATIONS", True),
         )

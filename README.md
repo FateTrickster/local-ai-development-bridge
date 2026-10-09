@@ -166,6 +166,7 @@ $env:BRIDGE_ALLOWED_ORIGINS = "https://xxxx.trycloudflare.com"
 | `BRIDGE_APPROVAL_TTL_SECONDS` | `300` | 待批准请求有效期，范围 30–3600 秒 |
 | `BRIDGE_DASHBOARD_ENABLED` | `1` | 是否启动 localhost-only 可观察性/审批 Dashboard |
 | `BRIDGE_DASHBOARD_PORT` | `8766` | Dashboard 首选 localhost 端口；占用时自动尝试后续端口 |
+| `BRIDGE_DESKTOP_NOTIFICATIONS` | `1` | 全部任务完成后是否弹出本机桌面提醒；设为 `0` 可关闭 |
 
 ## 权限
 
@@ -302,6 +303,19 @@ Dashboard 固定绑定 `127.0.0.1`，与公网 MCP Tunnel 分离。除本机审�
 - `dashboard_info`
 
 用于客户端直接查询可观察性状态。
+
+
+### 任务完成桌面提醒
+
+Bridge 会在任务计划从“未完成”进入“全部 `completed`”时，由程序自动触发一次本机提醒，不依赖 Prompt、模型记忆或当前对话。Windows 使用独立 PowerShell/WinForms MessageBox 进程弹窗，因此不会阻塞 MCP Server；同一份已完成任务计划通过 `.runtime/desktop-notification-state.json` 做持久化去重，Bridge 重启后也不会重复弹出。
+
+默认开启，可通过以下环境变量关闭：
+
+```powershell
+$env:BRIDGE_DESKTOP_NOTIFICATIONS = "0"
+```
+
+通知内容包括总任务名称、完成项数量、总用时和完成时间。Linux/macOS 使用系统原生通知后端（可用时）；无法启动通知时会记录 Activity，而不会影响任务状态写入。
 
 ## 本机审批门控
 
