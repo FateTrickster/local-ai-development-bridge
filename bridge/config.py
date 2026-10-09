@@ -42,6 +42,8 @@ class Settings:
     bridge_port: int = 8000
     allowed_hosts: tuple[str, ...] = ()
     allowed_origins: tuple[str, ...] = ()
+    dashboard_enabled: bool = True
+    dashboard_port: int = 8766
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -60,4 +62,6 @@ class Settings:
             bridge_port=bridge_port,
             allowed_hosts=tuple(_env_list("BRIDGE_ALLOWED_HOSTS")),
             allowed_origins=tuple(_env_list("BRIDGE_ALLOWED_ORIGINS")),
+            dashboard_enabled=_env_bool("BRIDGE_DASHBOARD_ENABLED", True),
+            dashboard_port=_env_int("BRIDGE_DASHBOARD_PORT", 8766, 1024, 65_535),
         )

@@ -1,8 +1,8 @@
 # Local MCP Bridge Roadmap
 
-目标：在不依赖 MoonCode 授权体系的前提下，实现一套可长期维护的本地 AI Development Bridge，并吸收 MoonCode 在文件安全、IDE 语义、持久终端、任务状态和权限控制方面的优点。
+目标：在不依赖 MoonCode 授权体系的前提下，实现一套可长期维护的本地 AI Development Bridge，并吸收 MoonCode 在文件安全、IDE 语义、持久终端、任务状态、权限控制和可观察性方面的优点。
 
-## P0：可靠性与安全底座
+## P0：可靠性与安全底座（已完成）
 
 1. 文件层
    - 稳定分页目录浏览
@@ -27,12 +27,13 @@
    - 有界缓冲与超时
 
 4. 公网安全层
-   - Bearer Token
+   - Bearer Token / capability URL
    - read/write/command 分权
    - 审计日志
    - 默认 localhost 监听
+   - DNS rebinding Host allowlist
 
-## P1：VS Code Companion
+## P1：VS Code Companion（基础能力已完成）
 
 - diagnostics
 - dirty editor buffer
@@ -40,22 +41,83 @@
 - definition/references/implementation/hover
 - provider ready/not_ready 状态
 
-## P1：任务状态
+后续仍需细化空结果与 provider 不可用、language server loading 等状态语义。
+
+## P1：任务状态（已完成）
 
 - todos
 - progress events
 - 长任务 journal
+- progress event 具体查询与 after_seq 增量读取
 
-## P2：产品化
+## P1.5：可观察性 / Activity / 本地控制台（当前实施）
 
-- 配置文件与工作区管理
-- 启动/停止/状态页
-- 固定 Cloudflare Tunnel 或自有域名
-- 自动重连
-- 多工作区
+目标：解决“ChatGPT / Bridge 正在做什么、做到哪里完全看不见”的黑匣子问题。
+
+已落地：
+
+- `ActivityService`
+- `.runtime/activity.jsonl`
+- tool started/completed/failed 结构化事件
+- command started/completed/failed 结构化事件
+- 常见 token / secret / Authorization / capability URL 脱敏
+- `get_activity`
+- `get_progress_events`
+- `dashboard_info`
+- Terminal command snapshot
+- localhost-only read-only Dashboard
+- 当前 todo / progress / activity / terminal / VS Code 状态可视化
+- Dashboard 与公网 MCP Tunnel 分离
+
+后续增强：
+
+- 文件修改增删行统计与可展开 diff
+- Activity log 轮转
+- 更丰富的运行耗时/失败统计
+- VS Code 内嵌 Status Bar / Tree View 或 Webview
+
+## P2.0：一键启动与 Tunnel Manager
+
+- 自动检查 Python / cloudflared / VS Code Companion
+- 启动 Quick Tunnel
+- 捕获实际 `trycloudflare.com` hostname
+- 自动写入精确 Host allowlist
+- 启动 MCP Server
+- initialize → tools/list smoke test
+- 输出脱敏公网地址与本地 Dashboard 地址
+- 启停与重连状态管理
+
+## P2.1：GitHub 工程化与 Release
+
+- Python unit test CI
+- TypeScript compile CI
+- secret scan
+- VSIX artifact
+- tag / changelog / GitHub Release
+- 可下载版本包
+
+## P2.2：VS Code LSP 可靠性强化
+
+明确区分：
+
+- READY_WITH_RESULTS
+- READY_EMPTY
+- PROVIDER_NOT_AVAILABLE
+- LANGUAGE_SERVER_LOADING
+- DOCUMENT_NOT_OPEN
+- WORKSPACE_MISMATCH
+- TIMEOUT
+
+## P2.3：稳定性与跨平台
+
+- 处理 pywinpty `ResourceWarning: unclosed socket`
 - 日志轮转
+- 多工作区
 - 权限确认 UI
+- Linux/macOS PTY 实现或明确 Windows-first 支持策略
 
 ## E2E
 
-完成 ChatGPT → HTTPS → MCP → 本地工作区的读取、修改、命令、IDE 语义端到端验证，并逐项与 MoonCode 功能矩阵复核。
+持续完成 ChatGPT → HTTPS → MCP → 本地工作区的读取、修改、命令、任务、Activity、Dashboard、IDE 语义端到端验证，并逐项与目标功能矩阵复核。
+
+完整审查与实施说明见 `OPTIMIZATION_PLAN.md`。

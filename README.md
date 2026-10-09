@@ -14,7 +14,9 @@
 - Windows 原生 PTY 持久终端：后台运行、command_id、增量输出、wait、stdin、终止；
 - 能力 URL Token / Bearer Token 双模式保护 MCP 入口；
 - HTTP 请求审计日志，不记录能力 Token；
-- 只读、写入、命令执行可独立控制。
+- 只读、写入、命令执行可独立控制；
+- 结构化 Activity/Event 事件记录与脱敏；
+- localhost-only 只读可观察性 Dashboard，可查看任务、活动、进度、终端和 VS Code 状态。
 
 ## 安装
 
@@ -47,9 +49,10 @@ start-full.cmd
 
 ```text
 Local MCP endpoint: http://127.0.0.1:8000/<capability-token>/mcp
+Observability dashboard: http://127.0.0.1:8766/ (localhost-only, read-only)
 ```
 
-`<capability-token>` 是访问凭据，不要提交到 Git，也不要公开分享。
+`<capability-token>` 是访问凭据，不要提交到 Git，也不要公开分享。Dashboard 默认使用单独的 localhost 端口，不通过 MCP Quick Tunnel 暴露。
 
 ## 公网连接
 
@@ -105,11 +108,13 @@ $env:BRIDGE_ALLOWED_ORIGINS = "https://xxxx.trycloudflare.com"
 | `WORKSPACE_ROOT` | 当前目录的上级 | 工作区根，所有路径不得越出 |
 | `ALLOW_WRITE` | `0` | 是否允许 `write_file` / `apply_patch` |
 | `ALLOW_COMMANDS` | `0` | 是否允许 `run_command` |
-| `BRIDGE_HOST` | `127.0.0.1` | 监听地址 |
-| `BRIDGE_PORT` | `8000` | 监听端口 |
+| `BRIDGE_HOST` | `127.0.0.1` | MCP 监听地址 |
+| `BRIDGE_PORT` | `8000` | MCP 监听端口 |
 | `BRIDGE_TOKEN` | 空 | 覆盖持久 capability Token（默认从 `.runtime/access-token.txt` 读取或生成） |
 | `BRIDGE_ALLOWED_HOSTS` | 空 | 追加到 DNS rebinding 保护的 Host 白名单 |
 | `BRIDGE_ALLOWED_ORIGINS` | 空 | 追加到 DNS rebinding 保护的 Origin 白名单 |
+| `BRIDGE_DASHBOARD_ENABLED` | `1` | 是否启动只读本地可观察性 Dashboard |
+| `BRIDGE_DASHBOARD_PORT` | `8766` | Dashboard 首选 localhost 端口；占用时自动尝试后续端口 |
 
 ## 权限
 
@@ -138,8 +143,38 @@ version: sha256:...
 ## 运行数据
 
 - `.runtime/access-token.txt`：本机持久能力 Token，已被 `.gitignore` 排除；
-- `.audit/requests.jsonl`：HTTP 审计日志，已被 `.gitignore` 排除；
+- `.runtime/todos.json`：当前持久任务快照；
+- `.runtime/progress.jsonl`：用户可读的进度事件；
+- `.runtime/activity.jsonl`：结构化工具、终端、文件和系统状态事件，写入前会执行敏感信息脱敏；
+- `.audit/requests.jsonl`：HTTP 安全审计日志，已被 `.gitignore` 排除；
 - PTY 单命令输出缓冲默认最多 4 MiB，并使用绝对 UTF-8 字节 offset 增量读取。
+
+## 可观察性 Dashboard
+
+Bridge 启动时默认同时启动本地只读 Dashboard：
+
+```text
+http://127.0.0.1:8766/
+```
+
+如果 8766 已被占用，会依次尝试后续端口，并在启动终端打印实际地址。
+
+Dashboard 当前显示：
+
+- 当前 todo、完成度和进行中任务；
+- 结构化 Activity Timeline；
+- `progress.jsonl` 中的具体进度事件；
+- 当前/最近 PTY 命令、状态、耗时和脱敏后的输出尾部；
+- Bridge 工作区与权限；
+- VS Code Companion ready/not_ready 状态。
+
+Dashboard 只提供 GET 只读接口，固定绑定 `127.0.0.1`，与公网 MCP Tunnel 分离。MCP 另外提供：
+
+- `get_activity`
+- `get_progress_events`
+- `dashboard_info`
+
+用于客户端直接查询可观察性状态。
 
 ## VS Code Companion
 
@@ -161,7 +196,7 @@ Companion 只监听 `127.0.0.1`，并使用本机持久 Token 保护 Bridge → 
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-当前路线见 `ROADMAP.md`。P0、任务状态和 VS Code Companion 已完成真机通信验证；下一步是启动/状态管理、稳定公网入口、多工作区和日志轮转等 P2 产品化工作。
+当前路线见 `ROADMAP.md`，本轮完整优化审查见 `OPTIMIZATION_PLAN.md`。下一重点是把 server、Quick Tunnel、动态 Host 白名单、VS Code Companion 检查和 smoke test 收敛为一键启动流程，并补 GitHub CI / Release。
 
 ## License
 
