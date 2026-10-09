@@ -70,6 +70,8 @@ Windows 使用 `pywinpty` 提供持久 PTY：后台命令、增量输出、stdin
 
 Python Bridge 通过 localhost-only Companion API 获取 VS Code diagnostics、dirty buffer 与 LSP provider 结果。Companion 使用本机 capability token 保护调用。
 
+LSP 层使用 semantic contract v2：传输层 `provider_state` 与语义查询结果 `semantic_state` 分离；同时返回文档打开状态、语言 ID、warmup retry 与 timeout 信息。这样 `[]` 不再等同于“provider 正常但无内容”，可以区分真正空结果、provider 不可用和超时。旧 Companion response 由 Python Bridge 做兼容规范化。
+
 ## 3. 安全边界
 
 - MCP Server 默认只监听 `127.0.0.1`。

@@ -434,6 +434,11 @@ def lsp(
         details={"operation": operation, "path": path, "line": line, "column": column, "query": query},
         summarize=lambda result: {
             "provider_state": result.get("provider_state"),
+            "semantic_state": result.get("semantic_state"),
+            "semantic_result_inconclusive": result.get("semantic_result_inconclusive"),
+            "document_state": result.get("document_state"),
+            "language_id": result.get("language_id"),
+            "warmup_retry_attempted": result.get("warmup_retry_attempted"),
             "operation": result.get("operation", operation),
             "results": len(result.get("results", [])),
             "truncated": result.get("truncated", False),

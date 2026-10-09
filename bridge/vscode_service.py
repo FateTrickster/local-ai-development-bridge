@@ -46,6 +46,63 @@ class VSCodeService:
             **extra,
         }
 
+    @staticmethod
+    def _semantic_state_from_reason(reason: str) -> str:
+        upper = reason.upper()
+        if "WORKSPACE_MISMATCH" in upper or "PATH_OUTSIDE_VSCODE_WORKSPACE" in upper or "NO_WORKSPACE_OPEN" in upper:
+            return "WORKSPACE_MISMATCH"
+        if "TIMEOUT" in upper or "TIMED OUT" in upper:
+            return "TIMEOUT"
+        if "PATH_REQUIRED" in upper:
+            return "INVALID_REQUEST"
+        if "PROVIDER_NOT_AVAILABLE" in upper:
+            return "PROVIDER_NOT_AVAILABLE"
+        return "PROVIDER_ERROR"
+
+    @classmethod
+    def _normalize_lsp_result(cls, operation: str, result: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(result)
+        normalized.setdefault("operation", operation)
+        results = normalized.get("results")
+        if not isinstance(results, list):
+            results = []
+            normalized["results"] = results
+        normalized.setdefault("truncated", False)
+
+        semantic_state = normalized.get("semantic_state")
+        if isinstance(semantic_state, str) and semantic_state:
+            normalized.setdefault(
+                "semantic_result_inconclusive",
+                semantic_state not in {"READY_WITH_RESULTS", "READY_EMPTY"},
+            )
+            normalized.setdefault("semantic_contract_version", 2)
+            return normalized
+
+        # Backward compatibility for older Companion builds that only returned
+        # provider_state + results. A non-empty legacy result is conclusive; an
+        # empty result remains ambiguous because older builds collapsed an
+        # unavailable provider to [].
+        if normalized.get("provider_state") == "ready":
+            if results:
+                normalized["semantic_state"] = "READY_WITH_RESULTS"
+                normalized["semantic_result_inconclusive"] = False
+            else:
+                normalized["semantic_state"] = "READY_EMPTY"
+                normalized["semantic_result_inconclusive"] = True
+                normalized.setdefault(
+                    "provider_state_reason",
+                    "Legacy Companion returned an empty result; provider availability cannot be distinguished",
+                )
+            normalized["semantic_contract_version"] = 1
+            normalized["legacy_semantics"] = True
+            return normalized
+
+        reason = str(normalized.get("provider_state_reason", "PROVIDER_ERROR"))
+        normalized["semantic_state"] = cls._semantic_state_from_reason(reason)
+        normalized["semantic_result_inconclusive"] = True
+        normalized["semantic_contract_version"] = 1
+        return normalized
+
     def _connection(self) -> tuple[int, str]:
         if not self.connection_file.is_file():
             raise RuntimeError("VSCODE_COMPANION_NOT_RUNNING")
@@ -183,9 +240,16 @@ class VSCodeService:
         if query is not None:
             payload["query"] = str(query)
         try:
-            return self._request("/lsp", payload)
+            result = self._request("/lsp", payload)
+            return self._normalize_lsp_result(operation, result)
         except RuntimeError as exc:
-            return self._not_ready(str(exc), operation=operation)
+            fallback = self._not_ready(
+                str(exc),
+                operation=operation,
+                semantic_state=self._semantic_state_from_reason(str(exc)),
+                semantic_contract_version=2,
+            )
+            return fallback
 
     def read_editor_buffer(
         self,

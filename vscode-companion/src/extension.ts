@@ -256,22 +256,149 @@ function flattenDocumentSymbols(symbols: vscode.DocumentSymbol[], maxResults: nu
   return output;
 }
 
+const LSP_QUERY_TIMEOUT_MS = 3000;
+const LSP_WARMUP_RETRY_MS = 350;
+
+class LspProviderTimeoutError extends Error {
+  constructor(public readonly operation: string) {
+    super(`LSP_PROVIDER_TIMEOUT: ${operation}`);
+    this.name = 'LspProviderTimeoutError';
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function executeProvider<T>(operation: string, command: string, ...args: unknown[]): Promise<T | undefined> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      vscode.commands.executeCommand<T>(command, ...args),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new LspProviderTimeoutError(operation)), LSP_QUERY_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+function semanticResult(
+  operation: string,
+  rawAvailable: boolean,
+  results: Record<string, unknown>[],
+  truncated: boolean,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  if (!rawAvailable) {
+    return {
+      provider_state: 'ready',
+      provider_state_reason: 'VS Code Companion reachable; execute-provider command returned no provider response',
+      semantic_state: 'PROVIDER_NOT_AVAILABLE',
+      semantic_result_inconclusive: true,
+      operation,
+      results: [],
+      truncated: false,
+      ...extra,
+    };
+  }
+  const hasResults = results.length > 0;
+  return {
+    provider_state: 'ready',
+    provider_state_reason: hasResults
+      ? 'Provider query completed with results'
+      : 'Provider query completed successfully with an empty result set',
+    semantic_state: hasResults ? 'READY_WITH_RESULTS' : 'READY_EMPTY',
+    semantic_result_inconclusive: false,
+    operation,
+    results,
+    truncated,
+    ...extra,
+  };
+}
+
+function lspErrorResult(operation: string, error: unknown): Record<string, unknown> {
+  const message = error instanceof Error ? error.message : String(error);
+  let semanticState = 'PROVIDER_ERROR';
+  if (error instanceof LspProviderTimeoutError || message.startsWith('LSP_PROVIDER_TIMEOUT:')) {
+    semanticState = 'TIMEOUT';
+  } else if (message === 'PATH_OUTSIDE_VSCODE_WORKSPACE' || message === 'NO_WORKSPACE_OPEN') {
+    semanticState = 'WORKSPACE_MISMATCH';
+  } else if (message === 'PATH_REQUIRED') {
+    semanticState = 'INVALID_REQUEST';
+  }
+  return {
+    provider_state: 'not_ready',
+    provider_state_reason: message,
+    semantic_state: semanticState,
+    semantic_result_inconclusive: true,
+    operation,
+    results: [],
+    truncated: false,
+  };
+}
+
+async function queryDocumentProvider<T>(
+  operation: string,
+  command: string,
+  uri: vscode.Uri,
+  args: unknown[],
+): Promise<{ raw: T | undefined; metadata: Record<string, unknown> }> {
+  const before = openDocumentState(uri);
+  const documentState = before.version == null ? 'DOCUMENT_NOT_OPEN' : 'DOCUMENT_OPEN';
+  let openedForQuery = false;
+  let languageId = before.languageId;
+
+  if (before.version == null) {
+    const opened = await vscode.workspace.openTextDocument(uri);
+    openedForQuery = true;
+    languageId = opened.languageId;
+  }
+
+  let raw = await executeProvider<T>(operation, command, ...args);
+  let warmupRetry = false;
+  let initialSemanticState: string | null = null;
+  if (raw == null && openedForQuery) {
+    // Opening a document can activate a language extension asynchronously. One short
+    // retry makes that transient visible instead of silently returning an empty list.
+    initialSemanticState = 'LANGUAGE_SERVER_LOADING';
+    warmupRetry = true;
+    await delay(LSP_WARMUP_RETRY_MS);
+    raw = await executeProvider<T>(operation, command, ...args);
+  }
+
+  return {
+    raw,
+    metadata: {
+      document_state: documentState,
+      document_opened_for_query: openedForQuery,
+      language_id: languageId,
+      warmup_retry_attempted: warmupRetry,
+      initial_semantic_state: initialSemanticState,
+    },
+  };
+}
+
 async function handleLsp(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const operation = String(body.operation ?? '');
   const maxResults = Math.max(1, Math.min(Number(body.max_results ?? 100), 500));
   try {
     if (operation === 'workspace_symbols') {
       const query = String(body.query ?? '');
-      const symbols = (await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
+      const raw = await executeProvider<vscode.SymbolInformation[]>(
+        operation,
         'vscode.executeWorkspaceSymbolProvider',
         query,
-      )) || [];
-      return {
-        provider_state: 'ready',
-        operation,
-        results: symbols.slice(0, maxResults).map(serializeSymbol),
-        truncated: symbols.length > maxResults,
-      };
+      );
+      const symbols = raw ?? [];
+      const results = symbols.slice(0, maxResults).map(serializeSymbol);
+      return semanticResult(operation, raw != null, results, symbols.length > maxResults, {
+        query,
+        document_state: null,
+      });
     }
 
     if (typeof body.path !== 'string' || !body.path) {
@@ -280,14 +407,17 @@ async function handleLsp(body: Record<string, unknown>): Promise<Record<string, 
     const uri = resolveWorkspaceUri(body.path);
 
     if (operation === 'document_symbols') {
-      const symbols = (await vscode.commands.executeCommand<(vscode.DocumentSymbol | vscode.SymbolInformation)[]>(
+      const queried = await queryDocumentProvider<(vscode.DocumentSymbol | vscode.SymbolInformation)[]>(
+        operation,
         'vscode.executeDocumentSymbolProvider',
         uri,
-      )) || [];
+        [uri],
+      );
+      const symbols = queried.raw ?? [];
       const results = symbols.length > 0 && symbols[0] instanceof vscode.DocumentSymbol
         ? flattenDocumentSymbols(symbols as vscode.DocumentSymbol[], maxResults)
         : (symbols as vscode.SymbolInformation[]).slice(0, maxResults).map(serializeSymbol);
-      return { provider_state: 'ready', operation, results, truncated: results.length >= maxResults };
+      return semanticResult(operation, queried.raw != null, results, symbols.length > maxResults, queried.metadata);
     }
 
     const line = Math.max(1, Number(body.line ?? 1));
@@ -295,32 +425,51 @@ async function handleLsp(body: Record<string, unknown>): Promise<Record<string, 
     const position = new vscode.Position(line - 1, column - 1);
 
     if (operation === 'definition') {
-      const locations = (await vscode.commands.executeCommand<(vscode.Location | vscode.LocationLink)[]>(
-        'vscode.executeDefinitionProvider', uri, position,
-      )) || [];
-      return { provider_state: 'ready', operation, results: locations.slice(0, maxResults).map(serializeLocation), truncated: locations.length > maxResults };
+      const queried = await queryDocumentProvider<(vscode.Location | vscode.LocationLink)[]>(
+        operation,
+        'vscode.executeDefinitionProvider',
+        uri,
+        [uri, position],
+      );
+      const locations = queried.raw ?? [];
+      const results = locations.slice(0, maxResults).map(serializeLocation);
+      return semanticResult(operation, queried.raw != null, results, locations.length > maxResults, queried.metadata);
     }
     if (operation === 'references') {
-      const locations = (await vscode.commands.executeCommand<vscode.Location[]>(
-        'vscode.executeReferenceProvider', uri, position,
-      )) || [];
+      const queried = await queryDocumentProvider<vscode.Location[]>(
+        operation,
+        'vscode.executeReferenceProvider',
+        uri,
+        [uri, position],
+      );
+      const locations = queried.raw ?? [];
       const includeDeclaration = body.include_declaration !== false;
-      let results = locations;
+      let filtered = locations;
       if (!includeDeclaration) {
-        results = locations.filter((location) => !(location.uri.toString() === uri.toString() && location.range.contains(position)));
+        filtered = locations.filter((location) => !(location.uri.toString() === uri.toString() && location.range.contains(position)));
       }
-      return { provider_state: 'ready', operation, results: results.slice(0, maxResults).map(serializeLocation), truncated: results.length > maxResults };
+      const results = filtered.slice(0, maxResults).map(serializeLocation);
+      return semanticResult(operation, queried.raw != null, results, filtered.length > maxResults, queried.metadata);
     }
     if (operation === 'implementation') {
-      const locations = (await vscode.commands.executeCommand<(vscode.Location | vscode.LocationLink)[]>(
-        'vscode.executeImplementationProvider', uri, position,
-      )) || [];
-      return { provider_state: 'ready', operation, results: locations.slice(0, maxResults).map(serializeLocation), truncated: locations.length > maxResults };
+      const queried = await queryDocumentProvider<(vscode.Location | vscode.LocationLink)[]>(
+        operation,
+        'vscode.executeImplementationProvider',
+        uri,
+        [uri, position],
+      );
+      const locations = queried.raw ?? [];
+      const results = locations.slice(0, maxResults).map(serializeLocation);
+      return semanticResult(operation, queried.raw != null, results, locations.length > maxResults, queried.metadata);
     }
     if (operation === 'hover') {
-      const hovers = (await vscode.commands.executeCommand<vscode.Hover[]>(
-        'vscode.executeHoverProvider', uri, position,
-      )) || [];
+      const queried = await queryDocumentProvider<vscode.Hover[]>(
+        operation,
+        'vscode.executeHoverProvider',
+        uri,
+        [uri, position],
+      );
+      const hovers = queried.raw ?? [];
       const results = hovers.slice(0, maxResults).map((hover) => ({
         range: hover.range ? serializeRange(hover.range) : null,
         contents: hover.contents.map((content) => {
@@ -333,18 +482,11 @@ async function handleLsp(body: Record<string, unknown>): Promise<Record<string, 
           return `${content.language}: ${content.value}`;
         }),
       }));
-      return { provider_state: 'ready', operation, results, truncated: hovers.length > maxResults };
+      return semanticResult(operation, queried.raw != null, results, hovers.length > maxResults, queried.metadata);
     }
     throw new Error(`UNKNOWN_LSP_OPERATION: ${operation}`);
   } catch (error) {
-    return {
-      provider_state: 'not_ready',
-      provider_state_reason: error instanceof Error ? error.message : String(error),
-      semantic_result_inconclusive: true,
-      operation,
-      results: [],
-      truncated: false,
-    };
+    return lspErrorResult(operation, error);
   }
 }
 
@@ -385,6 +527,20 @@ function healthPayload(): Record<string, unknown> {
     ready: true,
     pid: process.pid,
     port: activePort,
+    semantic_contract_version: 2,
+    lsp_query_timeout_ms: LSP_QUERY_TIMEOUT_MS,
+    lsp_warmup_retry_ms: LSP_WARMUP_RETRY_MS,
+    semantic_states: [
+      'READY_WITH_RESULTS',
+      'READY_EMPTY',
+      'PROVIDER_NOT_AVAILABLE',
+      'LANGUAGE_SERVER_LOADING',
+      'WORKSPACE_MISMATCH',
+      'TIMEOUT',
+      'INVALID_REQUEST',
+      'PROVIDER_ERROR',
+    ],
+    document_states: ['DOCUMENT_OPEN', 'DOCUMENT_NOT_OPEN'],
     workspace_folders: workspaceRoots(),
     open_documents: vscode.workspace.textDocuments.map((doc) => ({
       path: doc.uri.scheme === 'file' ? doc.uri.fsPath : doc.uri.toString(),

@@ -4,6 +4,11 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Added
+
+- VS Code Companion semantic contract v2 for LSP queries, including explicit ready/empty/provider-unavailable/timeout/workspace states, document-open metadata and warmup retry visibility.
+- Python-side normalization for legacy Companion LSP responses.
+
 ### Planned
 
 - CI / Release automation

@@ -278,7 +278,20 @@ npm install
 npm run compile
 ```
 
-Companion 只监听 `127.0.0.1`，并使用本机持久 Token 保护 Bridge → VS Code 的 HTTP 调用。若扩展未运行，相关 MCP 工具返回 `VSCODE_COMPANION_NOT_RUNNING`，不会把缺失的 IDE 语义伪装成空结果。
+Companion 只监听 `127.0.0.1`，并使用本机持久 Token 保护 Bridge → VS Code 的 HTTP 调用。若扩展未运行，相关 MCP 工具返回 `VSCODE_COMPANION_NOT_RUNNING`。
+
+LSP 查询使用 semantic contract v2，不再把所有空数组都视为同一种状态。`lsp` 返回中会显式给出：
+
+- `semantic_state=READY_WITH_RESULTS`：provider 查询完成并返回结果；
+- `semantic_state=READY_EMPTY`：provider 查询完成，但结果确实为空；
+- `semantic_state=PROVIDER_NOT_AVAILABLE`：VS Code execute-provider command 没有 provider response；
+- `semantic_state=TIMEOUT`：provider query 超过 3 秒；
+- `semantic_state=WORKSPACE_MISMATCH`：路径不属于当前 VS Code workspace；
+- `semantic_state=INVALID_REQUEST` / `PROVIDER_ERROR`：请求或 provider 执行失败；
+- `document_state=DOCUMENT_OPEN / DOCUMENT_NOT_OPEN`：查询前文档是否已经在 VS Code 中打开；
+- `initial_semantic_state=LANGUAGE_SERVER_LOADING` + `warmup_retry_attempted=true`：未打开文档时先打开并短暂等待语言扩展激活后重试。
+
+旧版 Companion 仍兼容：Python Bridge 会把 legacy response 规范化为同一结果结构，并对 legacy empty result 标记 `semantic_result_inconclusive=true`，避免错误声称 provider 一定可用。
 
 ## 测试
 
@@ -286,7 +299,7 @@ Companion 只监听 `127.0.0.1`，并使用本机持久 Token 保护 Bridge → 
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-当前路线见 `ROADMAP.md`，本轮完整优化审查见 `OPTIMIZATION_PLAN.md`。P1 一键启动与 Tunnel Manager、P2 CI / Release / VSIX 分发链已完成本地验证；下一重点是 VS Code LSP provider 状态语义细化。
+当前路线见 `ROADMAP.md`，本轮完整优化审查见 `OPTIMIZATION_PLAN.md`。P1 一键启动、P2 CI/Release 与 P3 LSP semantic contract 已完成；下一重点是 PTY 资源释放、Activity 日志轮转与跨平台稳定性。
 
 ## License
 
