@@ -44,6 +44,7 @@ class DashboardService:
         self.launcher_state = launcher_state or LauncherStateStore()
         self.approvals = approvals or ApprovalService(ttl_seconds=settings.approval_ttl_seconds)
         self.ai_telemetry = ai_telemetry or AITelemetryService()
+        self.telemetry_token = secrets.token_urlsafe(32)
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self.port: int | None = None
@@ -289,6 +290,15 @@ class DashboardService:
                         return False
                 return True
 
+            def _telemetry_authorized(self) -> bool:
+                # Browser extensions use extension:// origins, so telemetry gets
+                # a separate ephemeral localhost-only token instead of the
+                # stricter same-origin Dashboard mutation policy.
+                if not self._local_host_ok():
+                    return False
+                candidate = self.headers.get("X-Bridge-Telemetry-Token", "")
+                return bool(candidate) and secrets.compare_digest(candidate, service.telemetry_token)
+
             def _read_json_body(self) -> dict[str, Any]:
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
@@ -357,6 +367,7 @@ class DashboardService:
                 if parsed.path == "/api/session":
                     self._json(200, {
                         "dashboard_token": service.approvals.dashboard_token,
+                        "telemetry_token": service.telemetry_token,
                         "confirm_writes": service.settings.confirm_writes,
                         "confirm_commands": service.settings.confirm_commands,
                         "approval_ttl_seconds": service.settings.approval_ttl_seconds,
@@ -365,11 +376,11 @@ class DashboardService:
                 self._json(404, {"error": "not_found"})
 
             def do_POST(self) -> None:  # noqa: N802
-                if not self._mutation_authorized():
-                    self._json(403, {"error": "dashboard_mutation_forbidden"})
-                    return
                 parsed = urlparse(self.path)
                 if parsed.path == "/api/telemetry/ai-output":
+                    if not self._telemetry_authorized():
+                        self._json(403, {"error": "telemetry_forbidden"})
+                        return
                     try:
                         payload = self._read_json_body()
                         result = service.ai_telemetry.record(
@@ -382,6 +393,9 @@ class DashboardService:
                         self._json(400, {"error": str(exc)})
                         return
                     self._json(200, result)
+                    return
+                if not self._mutation_authorized():
+                    self._json(403, {"error": "dashboard_mutation_forbidden"})
                     return
                 parts = [part for part in parsed.path.split("/") if part]
                 if len(parts) != 3 or parts[:2] != ["api", "approvals"]:

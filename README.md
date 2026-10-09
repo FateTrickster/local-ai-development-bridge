@@ -267,7 +267,9 @@ version: sha256:...
 
 任务层级通过 todo 的可选 `parent_id` 持久化；活动分支可以是同一祖先链上的多个 `in_progress` 项。阶段开始/完成时间由 `TaskService` 保存，因此页面刷新或换对话后仍可继续计算。
 
-AI token streaming **不能从普通 MCP tool traffic 自动得到**。Bridge 因此不会用字符数或 Prompt 估算伪造 TPS；当客户端没有提供自动遥测时显示“未接入”。兼容本地客户端可以通过 localhost-only `/api/telemetry/ai-output` 程序接口提交 exact `output_tokens` + `duration_ms`，数据落到 `.runtime/ai-output.jsonl`。
+AI token streaming **不能从普通 MCP tool traffic 自动得到**。为了让默认页面持续有一个直观的速度数字，仓库提供了 `browser-telemetry/` Chrome / Edge 扩展：它观察 ChatGPT 网页 assistant 文本增长，用“CJK 字符约 1 token、其他非空白字符约 4 字符/token”的简单启发式估算新增 token，并约每 1.2 秒发送一个增量到 localhost-only `/api/telemetry/ai-output`。Dashboard 对这类数据明确显示 `≈` / “估算”，用于状态反馈而不是计费或性能基准。
+
+安装方式：打开 `edge://extensions/` 或 `chrome://extensions/`，开启开发人员模式，选择“加载解压缩的扩展”，然后选择仓库中的 `browser-telemetry` 目录并刷新 ChatGPT 网页。扩展自动探测 Dashboard 端口 `8766`–`8776`，无需手工填写 token。遥测数据仍落到 `.runtime/ai-output.jsonl`。
 
 此前完整的 Activity / Terminal / Workspace / Approval / Launcher / VS Code 控制台仍保留在：
 

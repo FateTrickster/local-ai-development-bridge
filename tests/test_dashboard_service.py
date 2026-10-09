@@ -208,6 +208,7 @@ class DashboardServiceTests(unittest.TestCase):
         with urllib.request.urlopen(base + "/api/session", timeout=3) as response:
             session = json.loads(response.read().decode("utf-8"))
             token = session["dashboard_token"]
+            self.assertTrue(session["telemetry_token"])
             self.assertTrue(session["confirm_writes"])
         with urllib.request.urlopen(base + "/api/workspaces", timeout=3) as response:
             payload = json.loads(response.read().decode("utf-8"))
@@ -271,7 +272,7 @@ class DashboardServiceTests(unittest.TestCase):
         started = self.service.start()
         base = started["url"].rstrip("/")
         with urllib.request.urlopen(base + "/api/session", timeout=3) as response:
-            token = json.loads(response.read().decode("utf-8"))["dashboard_token"]
+            token = json.loads(response.read().decode("utf-8"))["telemetry_token"]
         request = urllib.request.Request(
             base + "/api/telemetry/ai-output",
             data=json.dumps({
@@ -283,7 +284,8 @@ class DashboardServiceTests(unittest.TestCase):
             method="POST",
             headers={
                 "Content-Type": "application/json",
-                "X-Bridge-Dashboard-Token": token,
+                "X-Bridge-Telemetry-Token": token,
+                "Origin": "chrome-extension://telemetry-test",
             },
         )
         with urllib.request.urlopen(request, timeout=3) as response:
@@ -293,6 +295,20 @@ class DashboardServiceTests(unittest.TestCase):
             focus = json.loads(response.read().decode("utf-8"))
             self.assertEqual(focus["ai_output"]["latest_tps"], 266.0)
             self.assertEqual(focus["ai_output"]["one_minute"]["output_tokens"], 2660)
+
+
+    def test_ai_telemetry_rejects_missing_token(self) -> None:
+        started = self.service.start()
+        base = started["url"].rstrip("/")
+        request = urllib.request.Request(
+            base + "/api/telemetry/ai-output",
+            data=b'{"output_tokens":10,"duration_ms":100}',
+            method="POST",
+            headers={"Content-Type": "application/json", "Origin": "https://chatgpt.com"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as denied:
+            urllib.request.urlopen(request, timeout=3)
+        self.assertEqual(denied.exception.code, 403)
 
 
 if __name__ == "__main__":

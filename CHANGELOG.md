@@ -6,6 +6,8 @@ All notable changes to this project will be documented here.
 
 ### Added
 
+- Simple Chrome/Edge `browser-telemetry/` companion that observes ChatGPT assistant text growth and reports clearly-labelled estimated token/TPS deltas to the localhost Dashboard.
+- Separate ephemeral localhost telemetry token so browser extensions can report metrics without reusing Dashboard approval authorization.
 - Program-level desktop completion popup with persistent de-duplication; Windows uses a detached WinForms MessageBox and can be disabled with `BRIDGE_DESKTOP_NOTIFICATIONS=0`.
 - Focused default Dashboard with AI output 1-minute/5-minute windows and TPS telemetry, hierarchical stage timing, task-tree highlighting, and file-change paths.
 - Preserved the previous full observability/control UI as `dashboard/advanced.html`.

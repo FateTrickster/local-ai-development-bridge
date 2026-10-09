@@ -577,15 +577,13 @@ Dashboard Workspaces 页显示 policy mode、effective write/command permissions
 
 ### 15.3 AI 输出量 / TPS 的边界
 
-MCP Server 本身不会收到 ChatGPT 助手的 token streaming，因此不能从普通 MCP tool traffic 得到真实 TPS。为避免再次形成“提示词约定”，当前实现明确禁止用提示词长度、工具参数或字符数伪造 token 指标。
+MCP Server 本身不会收到 ChatGPT 助手的 token streaming，因此不能从普通 MCP tool traffic 得到官方精确 TPS。当前策略调整为：**允许为了状态反馈提供近似值，但必须明确标记为估算，不能冒充官方 usage。**
 
-新增 `AITelemetryService` 与 `.runtime/ai-output.jsonl`，并提供 localhost-only 的 `/api/telemetry/ai-output` 接口。兼容客户端或本地适配器可以程序化提交：
+`AITelemetryService` 与 `.runtime/ai-output.jsonl` 继续负责 1 min / 5 min 聚合。新增 `browser-telemetry/` Chrome / Edge 扩展，在 ChatGPT 网页侧观察最新 assistant 消息的文本增长，并采用非常简单的启发式：CJK 字符约按 1 token / 字符，其他非空白字符约按 4 字符 / token。扩展约每 1.2 秒发送新增估算 token 与时长，因此默认 Dashboard 可以持续出现一个“≈ TPS”数字。
 
-```json
-{"output_tokens": 2660, "duration_ms": 10000, "source": "client", "model": "..."}
-```
+浏览器扩展只发送数字增量与耗时，不发送 assistant 正文。Dashboard 的 `/api/session` 提供独立 ephemeral `telemetry_token`；扩展用该 token 向 localhost-only `/api/telemetry/ai-output` 上报，和审批用的 Dashboard token 分离。扩展自动探测 `8766`–`8776` 端口。
 
-随后 Dashboard 自动计算近 1 min / 5 min 输出量和 TPS。没有自动遥测来源时，界面明确显示“未接入”，而不是给出估算值。该设计保证换对话、换模型时不会因为 Prompt 丢失而产生伪数据。
+若未来宿主客户端能够提供官方 `output_tokens` / usage，则仍可向同一接口提交精确数据；Dashboard 会根据 source 区分“估算 / 实测”。因此这个方案的目的只是让用户看到持续变化的速度数字并确认系统仍在工作，而不是用于计费或性能基准。
 
 ### 15.4 文件变更投影
 
