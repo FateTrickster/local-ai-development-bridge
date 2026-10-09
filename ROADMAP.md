@@ -179,3 +179,16 @@
 持续完成 ChatGPT → HTTPS → MCP → 本地工作区的读取、修改、命令、任务、Activity、Dashboard、IDE 语义端到端验证，并逐项与目标功能矩阵复核。
 
 完整审查与实施说明见 `OPTIMIZATION_PLAN.md`。
+
+## P2.7：聚焦型动态 Dashboard（已完成）
+
+- 默认 Dashboard 收敛为 AI 输出、阶段用时、任务树、文件变更四类信息；
+- 原完整控制台保留为 `/advanced.html`；
+- TaskService 支持 `parent_id`、活动分支、阶段开始/完成时间与动态 elapsed；
+- 当前最细 active leaf 在任务树中标绿；
+- 文件变更合并 Activity 与 Git worktree projection，并显示绝对地址；
+- 新增 AITelemetryService、1 min / 5 min token windows 与 TPS；
+- AI token stream 未由 MCP client 提供时明确显示未接入，不生成伪 TPS；
+- localhost-only telemetry ingest 为未来客户端自动接入预留程序接口。
+
+下一步仅在用户需要时继续扩展；默认主界面不再增加新的监控模块。

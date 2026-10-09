@@ -553,3 +553,48 @@ Dashboard Workspaces 页显示 policy mode、effective write/command permissions
 - Launcher `--workspace-policy docs=readonly` 真机 local E2E 启动通过，24 tools initialize/tools-list smoke 通过。
 
 下一阶段：进程树/CPU/内存可观察性，以及 Dashboard workspace/event 过滤与检索。
+
+## 15. P8 聚焦型动态 Dashboard（2026-10-09）
+
+根据实际使用反馈，原 Dashboard 虽然已经具备 Activity、Terminal、Workspace、Approval、Launcher、VS Code 等大量可观察信息，但主界面信息密度过高。P8 将默认界面收敛为四类真正需要持续关注的信息，其他能力继续记录并保留在高级页面，不再占据默认视图。
+
+### 15.1 默认页面只展示四类信息
+
+1. **AI 输出**：近 1 min / 5 min 输出 token 数，以及最近一次输出 TPS；
+2. **阶段用时**：大目标、分目标、小目标的实时用时；
+3. **任务规划与分级**：持久化任务树，当前正在处理的最细分支标绿；
+4. **文件变更**：新增 / 修改 / 删除文件、workspace、相对路径与完整绝对地址。
+
+默认页面为 `dashboard/index.html`，持续轮询 `/api/focus`。此前完整控制台被保留为 `dashboard/advanced.html`，审批等高级能力没有删除，只是不再出现在默认页面。
+
+### 15.2 可视化仍由程序驱动，而不是 Prompt 驱动
+
+- `TaskService` 将 `parent_id`、`created_at`、`started_at`、`completed_at` 持久化到 `.runtime/todos.json`；
+- 一个活动分支可以由“总任务 -> 分任务 -> 当前叶子”多级 `in_progress` 组成，但不允许平行分支同时处于 `in_progress`；
+- `get_state()` 自动计算 `active_path`、`active_leaf_id`、层级与 elapsed time；
+- 文件变更来自结构化 `file_changed` Activity，并额外读取 workspace 内 Git worktree 状态，从而覆盖通过终端脚本造成的未提交修改；
+- Dashboard 每 1.5 秒读取 `/api/focus`，不需要模型主动修改 HTML。
+
+### 15.3 AI 输出量 / TPS 的边界
+
+MCP Server 本身不会收到 ChatGPT 助手的 token streaming，因此不能从普通 MCP tool traffic 得到真实 TPS。为避免再次形成“提示词约定”，当前实现明确禁止用提示词长度、工具参数或字符数伪造 token 指标。
+
+新增 `AITelemetryService` 与 `.runtime/ai-output.jsonl`，并提供 localhost-only 的 `/api/telemetry/ai-output` 接口。兼容客户端或本地适配器可以程序化提交：
+
+```json
+{"output_tokens": 2660, "duration_ms": 10000, "source": "client", "model": "..."}
+```
+
+随后 Dashboard 自动计算近 1 min / 5 min 输出量和 TPS。没有自动遥测来源时，界面明确显示“未接入”，而不是给出估算值。该设计保证换对话、换模型时不会因为 Prompt 丢失而产生伪数据。
+
+### 15.4 文件变更投影
+
+`write_file` / `apply_patch` 的 `file_changed` 事件现在包含 action、相对路径与绝对地址。Dashboard 同时探测 workspace 本身或其一级子目录中的 Git repository，通过 `git status --short` 自动补足终端命令造成的当前未提交变更。因此即使某次文件修改不是通过 File/Patch MCP tool 完成，也能在默认页面的“文件变更”区域看到。
+
+### 15.5 当前验收
+
+- 层级任务与阶段计时专项测试通过；
+- AI telemetry 1 min / 5 min / TPS 统计测试通过；
+- 默认 Dashboard `/api/focus`、高级页面与审批接口兼容测试通过；
+- 默认页面 JavaScript 语法检查通过；
+- 完整 Python 回归 84/84 通过；`compileall`、Dashboard JavaScript syntax check、Secret Scan、VS Code Companion compile 均通过。

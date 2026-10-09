@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .activity_service import ActivityService
+from .ai_telemetry import AITelemetryService
 from .approval_service import ApprovalService
 from .config import Settings
 from .launcher_state import LauncherStateStore
@@ -19,6 +21,7 @@ from .workspace_registry import WorkspaceRegistry
 
 _PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 _DASHBOARD_HTML = _PACKAGE_ROOT / "dashboard" / "index.html"
+_ADVANCED_DASHBOARD_HTML = _PACKAGE_ROOT / "dashboard" / "advanced.html"
 
 
 class DashboardService:
@@ -32,6 +35,7 @@ class DashboardService:
         registry: WorkspaceRegistry,
         launcher_state: LauncherStateStore | None = None,
         approvals: ApprovalService | None = None,
+        ai_telemetry: AITelemetryService | None = None,
     ):
         self.settings = settings
         self.activity = activity
@@ -39,9 +43,150 @@ class DashboardService:
         self.registry = registry
         self.launcher_state = launcher_state or LauncherStateStore()
         self.approvals = approvals or ApprovalService(ttl_seconds=settings.approval_ttl_seconds)
+        self.ai_telemetry = ai_telemetry or AITelemetryService()
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self.port: int | None = None
+
+    def _git_worktree_changes(self) -> list[dict[str, Any]]:
+        changes: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for workspace in self.registry.list_workspaces().get("workspaces", []):
+            if not isinstance(workspace, dict):
+                continue
+            workspace_id = str(workspace.get("workspace_id") or "default")
+            root = Path(str(workspace.get("workspace_root") or ""))
+            if not root.is_dir():
+                continue
+
+            repo_roots: list[Path] = []
+            if (root / ".git").exists():
+                repo_roots.append(root)
+            else:
+                try:
+                    for child in root.iterdir():
+                        if len(repo_roots) >= 16:
+                            break
+                        if child.is_dir() and (child / ".git").exists():
+                            repo_roots.append(child)
+                except OSError:
+                    pass
+
+            for repo_root in repo_roots:
+                try:
+                    result = subprocess.run(
+                        ["git", "-c", "core.quotepath=false", "status", "--short", "--untracked-files=all"],
+                        cwd=repo_root,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=2.0,
+                    )
+                except (OSError, subprocess.SubprocessError):
+                    continue
+                if result.returncode != 0:
+                    continue
+                try:
+                    repo_prefix = repo_root.resolve().relative_to(root.resolve())
+                except ValueError:
+                    repo_prefix = Path()
+                for raw_line in result.stdout.splitlines():
+                    if len(raw_line) < 4:
+                        continue
+                    code = raw_line[:2]
+                    repo_relative = raw_line[3:].strip()
+                    if " -> " in repo_relative:
+                        repo_relative = repo_relative.rsplit(" -> ", 1)[1].strip()
+                    repo_relative = repo_relative.strip('"')
+                    if not repo_relative:
+                        continue
+                    if code == "??" or "A" in code:
+                        action = "add"
+                    elif "D" in code:
+                        action = "delete"
+                    else:
+                        action = "modify"
+                    workspace_relative = (repo_prefix / Path(repo_relative)).as_posix()
+                    key = (workspace_id, workspace_relative)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    changes.append({
+                        "timestamp": None,
+                        "workspace_id": workspace_id,
+                        "action": action,
+                        "action_label": {"add": "Added", "modify": "Modified", "delete": "Deleted"}[action],
+                        "path": workspace_relative,
+                        "absolute_path": str((repo_root / repo_relative).resolve()),
+                        "source": "git_status",
+                    })
+        return changes
+
+    def file_changes(self, limit: int = 80) -> dict[str, Any]:
+        limit = max(1, min(int(limit), 300))
+        current = self._git_worktree_changes()
+        payload = self.activity.list_events(limit=1200)
+        events = payload.get("events", []) if isinstance(payload, dict) else []
+        changes: list[dict[str, Any]] = list(current)
+        seen = {(item.get("workspace_id"), item.get("path"), item.get("action")) for item in current}
+        action_names = {
+            "add": "Added",
+            "create": "Added",
+            "update": "Modified",
+            "modify": "Modified",
+            "write": "Modified",
+            "delete": "Deleted",
+            "remove": "Deleted",
+        }
+        for event in reversed(events):
+            if not isinstance(event, dict) or event.get("type") != "file_changed":
+                continue
+            details = event.get("details") if isinstance(event.get("details"), dict) else {}
+            workspace_id = str(details.get("workspace_id") or "default")
+            raw_files = details.get("files")
+            if isinstance(raw_files, list):
+                file_items = [item for item in raw_files if isinstance(item, dict)]
+            else:
+                file_items = [{
+                    "path": details.get("path"),
+                    "absolute_path": details.get("absolute_path"),
+                    "action": details.get("action") or "modify",
+                }]
+            for item in file_items:
+                relative = str(item.get("path") or "").strip()
+                if not relative:
+                    continue
+                absolute = item.get("absolute_path")
+                if not absolute:
+                    try:
+                        absolute = str(self.registry.get(workspace_id).guard.resolve(relative))
+                    except Exception:
+                        absolute = relative
+                action = str(item.get("action") or "modify").casefold()
+                key = (workspace_id, relative, action)
+                if key in seen:
+                    continue
+                seen.add(key)
+                changes.append({
+                    "timestamp": event.get("timestamp"),
+                    "workspace_id": workspace_id,
+                    "action": action,
+                    "action_label": action_names.get(action, action),
+                    "path": relative,
+                    "absolute_path": str(absolute),
+                    "source": "activity",
+                })
+                if len(changes) >= limit:
+                    return {"changes": changes[:limit], "count": min(len(changes), limit)}
+        return {"changes": changes[:limit], "count": min(len(changes), limit)}
+
+    def focus_snapshot(self) -> dict[str, Any]:
+        return {
+            "ai_output": self.ai_telemetry.snapshot(),
+            "task": self.tasks.get_state(),
+            "file_changes": self.file_changes(limit=100),
+        }
 
     def snapshot(self) -> dict[str, Any]:
         task_state = self.tasks.get_state()
@@ -85,6 +230,8 @@ class DashboardService:
             "vscode": vscode,
             "launcher": launcher,
             "approvals": approval_state,
+            "ai_output": self.ai_telemetry.snapshot(),
+            "file_changes": self.file_changes(limit=100),
         }
 
     def _handler_class(self):
@@ -115,9 +262,9 @@ class DashboardService:
                 self._headers(status, "application/json; charset=utf-8", len(body))
                 self.wfile.write(body)
 
-            def _html(self) -> None:
+            def _html(self, path: Path = _DASHBOARD_HTML) -> None:
                 try:
-                    body = _DASHBOARD_HTML.read_bytes()
+                    body = path.read_bytes()
                 except OSError:
                     self._json(500, {"error": "DASHBOARD_HTML_MISSING"})
                     return
@@ -162,6 +309,18 @@ class DashboardService:
                 parsed = urlparse(self.path)
                 if parsed.path in {"/", "/index.html"}:
                     self._html()
+                    return
+                if parsed.path == "/advanced.html":
+                    self._html(_ADVANCED_DASHBOARD_HTML)
+                    return
+                if parsed.path == "/api/focus":
+                    self._json(200, service.focus_snapshot())
+                    return
+                if parsed.path == "/api/ai-output":
+                    self._json(200, service.ai_telemetry.snapshot())
+                    return
+                if parsed.path == "/api/file-changes":
+                    self._json(200, service.file_changes(limit=100))
                     return
                 if parsed.path == "/api/state":
                     self._json(200, service.snapshot())
@@ -210,6 +369,20 @@ class DashboardService:
                     self._json(403, {"error": "dashboard_mutation_forbidden"})
                     return
                 parsed = urlparse(self.path)
+                if parsed.path == "/api/telemetry/ai-output":
+                    try:
+                        payload = self._read_json_body()
+                        result = service.ai_telemetry.record(
+                            output_tokens=int(payload.get("output_tokens")),
+                            duration_ms=int(payload.get("duration_ms")),
+                            source=str(payload.get("source") or "client"),
+                            model=str(payload.get("model")) if payload.get("model") else None,
+                        )
+                    except (TypeError, ValueError) as exc:
+                        self._json(400, {"error": str(exc)})
+                        return
+                    self._json(200, result)
+                    return
                 parts = [part for part in parsed.path.split("/") if part]
                 if len(parts) != 3 or parts[:2] != ["api", "approvals"]:
                     self._json(404, {"error": "not_found"})

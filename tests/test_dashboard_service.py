@@ -8,6 +8,7 @@ import urllib.request
 from pathlib import Path
 
 from bridge.activity_service import ActivityService
+from bridge.ai_telemetry import AITelemetryService
 from bridge.approval_service import ApprovalService
 from bridge.config import Settings
 from bridge.dashboard_service import DashboardService
@@ -115,6 +116,7 @@ class DashboardServiceTests(unittest.TestCase):
         self.activity = ActivityService(root / "activity.jsonl")
         self.tasks = TaskService(root / "todos.json", root / "progress.jsonl")
         self.approvals = ApprovalService(ttl_seconds=120)
+        self.ai_telemetry = AITelemetryService(root / "ai-output.jsonl")
         self.launcher_state = LauncherStateStore(root / "launcher-state.json")
         self.launcher_state.replace(
             {
@@ -142,6 +144,7 @@ class DashboardServiceTests(unittest.TestCase):
             self.registry,  # type: ignore[arg-type]
             self.launcher_state,
             self.approvals,
+            self.ai_telemetry,
         )
 
     def tearDown(self) -> None:
@@ -194,8 +197,13 @@ class DashboardServiceTests(unittest.TestCase):
         with urllib.request.urlopen(base + "/", timeout=3) as response:
             html = response.read().decode("utf-8")
             self.assertEqual(response.status, 200)
+            self.assertIn("AI 输出", html)
+            self.assertIn("阶段用时", html)
+            self.assertIn("任务规划与分级", html)
+            self.assertIn("文件变更", html)
+        with urllib.request.urlopen(base + "/advanced.html", timeout=3) as response:
+            html = response.read().decode("utf-8")
             self.assertIn("Local Approval Queue", html)
-            self.assertIn("Workspaces", html)
             self.assertIn("批准一次", html)
         with urllib.request.urlopen(base + "/api/session", timeout=3) as response:
             session = json.loads(response.read().decode("utf-8"))
@@ -205,6 +213,11 @@ class DashboardServiceTests(unittest.TestCase):
             payload = json.loads(response.read().decode("utf-8"))
             self.assertEqual(payload["count"], 2)
             self.assertEqual(payload["workspaces"][1]["workspace_id"], "docs")
+        with urllib.request.urlopen(base + "/api/focus", timeout=3) as response:
+            focus = json.loads(response.read().decode("utf-8"))
+            self.assertIn("ai_output", focus)
+            self.assertIn("task", focus)
+            self.assertIn("file_changes", focus)
         with urllib.request.urlopen(base + "/api/state", timeout=3) as response:
             payload = json.loads(response.read().decode("utf-8"))
             self.assertEqual(payload["approvals"]["pending"], 1)
@@ -236,6 +249,50 @@ class DashboardServiceTests(unittest.TestCase):
             self._post_decision(base, request["request_id"], token, "approve", origin="http://evil.example")
         self.assertEqual(cross.exception.code, 403)
         self.assertEqual(self.approvals.list_requests()["pending"], 1)
+
+    def test_focus_snapshot_projects_file_changes(self) -> None:
+        self.activity.emit(
+            "file_changed",
+            status="completed",
+            title="created file",
+            component="files",
+            details={
+                "workspace_id": "default",
+                "path": "src/new.py",
+                "absolute_path": "D:/default/src/new.py",
+                "action": "add",
+            },
+        )
+        focus = self.service.focus_snapshot()
+        self.assertEqual(focus["file_changes"]["changes"][0]["action"], "add")
+        self.assertEqual(focus["file_changes"]["changes"][0]["absolute_path"], "D:/default/src/new.py")
+
+    def test_local_ai_telemetry_ingest_updates_focus(self) -> None:
+        started = self.service.start()
+        base = started["url"].rstrip("/")
+        with urllib.request.urlopen(base + "/api/session", timeout=3) as response:
+            token = json.loads(response.read().decode("utf-8"))["dashboard_token"]
+        request = urllib.request.Request(
+            base + "/api/telemetry/ai-output",
+            data=json.dumps({
+                "output_tokens": 2660,
+                "duration_ms": 10000,
+                "source": "test-client",
+                "model": "test-model",
+            }).encode("utf-8"),
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-Bridge-Dashboard-Token": token,
+            },
+        )
+        with urllib.request.urlopen(request, timeout=3) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(payload["tps"], 266.0)
+        with urllib.request.urlopen(base + "/api/focus", timeout=3) as response:
+            focus = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(focus["ai_output"]["latest_tps"], 266.0)
+            self.assertEqual(focus["ai_output"]["one_minute"]["output_tokens"], 2660)
 
 
 if __name__ == "__main__":

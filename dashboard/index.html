@@ -3,342 +3,205 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Local AI Development Bridge</title>
+  <title>Local AI Bridge · Task Monitor</title>
   <style>
     :root {
       color-scheme: light dark;
-      --bg:#f5f6f8; --panel:#ffffff; --panel-2:#f0f2f5; --text:#17191c; --muted:#6f7680;
-      --border:#dfe3e8; --ok:#177245; --warn:#9a6700; --bad:#b42318; --accent:#3157d5; --code:#101418;
+      --bg:#f6f7f9; --panel:#fff; --soft:#f1f3f5; --text:#17191c; --muted:#737a84;
+      --border:#dfe3e8; --green:#18864b; --green-soft:#e9f7ef; --blue:#3157d5; --red:#b42318;
+      --shadow:0 1px 2px rgba(0,0,0,.035);
     }
     @media (prefers-color-scheme: dark) {
-      :root { --bg:#111315; --panel:#181b1f; --panel-2:#20242a; --text:#eef1f4; --muted:#9ba3ad; --border:#30363d; --ok:#4ac58b; --warn:#e0a82e; --bad:#ff766d; --accent:#7c9cff; --code:#0b0d0f; }
+      :root { --bg:#111315; --panel:#181b1f; --soft:#20242a; --text:#eef1f4; --muted:#9da5af;
+        --border:#30363d; --green:#55c78c; --green-soft:#183326; --blue:#84a0ff; --red:#ff7a70; --shadow:none; }
     }
     * { box-sizing:border-box; }
-    body { margin:0; font:14px/1.5 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--text); }
-    main { max-width:1320px; margin:0 auto; padding:22px; }
-    h1,h2,h3,p { margin:0; }
-    .top { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:18px; }
-    .title h1 { font-size:23px; font-weight:720; letter-spacing:.1px; }
-    .title p { color:var(--muted); margin-top:5px; }
-    .live { display:flex; align-items:center; gap:8px; white-space:nowrap; color:var(--muted); }
-    .dot { width:9px; height:9px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 14%,transparent); }
-    .grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:10px; }
-    .card,.panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; }
-    .card { padding:13px 14px; min-height:82px; }
-    .card .label { color:var(--muted); font-size:12px; }
-    .card .value { margin-top:7px; font-size:17px; font-weight:700; overflow-wrap:anywhere; }
-    .card .sub { margin-top:3px; color:var(--muted); font-size:12px; }
-    .task { margin-top:12px; padding:15px; }
-    .task-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
-    .task-title { font-weight:700; font-size:16px; }
-    .task-sub { color:var(--muted); margin-top:4px; }
-    .bar { height:8px; background:var(--panel-2); border-radius:999px; overflow:hidden; margin-top:12px; }
-    .bar > span { display:block; height:100%; width:0; background:var(--accent); transition:width .25s ease; }
-    .todos { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:12px; }
-    .todo { padding:10px 11px; background:var(--panel-2); border-radius:9px; display:flex; align-items:flex-start; gap:9px; min-width:0; }
-    .todo .state { width:8px; height:8px; border-radius:50%; margin-top:6px; flex:0 0 auto; }
-    .todo .content { min-width:0; overflow-wrap:anywhere; }
-    .todo small { display:block; color:var(--muted); margin-top:2px; }
-    .state.completed { background:var(--ok); } .state.in_progress { background:var(--accent); } .state.pending { background:var(--muted); }
-    .tabs { display:flex; flex-wrap:wrap; gap:7px; margin:14px 0 9px; }
-    button { font:inherit; color:inherit; background:var(--panel); border:1px solid var(--border); padding:8px 12px; border-radius:9px; cursor:pointer; }
-    button.active { border-color:var(--accent); color:var(--accent); font-weight:650; }
-    .panel { padding:14px; }
-    .panel[hidden] { display:none; }
-    .panel-head { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:10px; }
-    .panel-head h2 { font-size:15px; }
-    .muted { color:var(--muted); }
-    .timeline { display:flex; flex-direction:column; gap:0; }
-    .event { display:grid; grid-template-columns:92px 115px minmax(0,1fr) auto; gap:10px; align-items:start; padding:10px 3px; border-bottom:1px solid var(--border); }
-    .event:last-child { border-bottom:0; }
-    .time,.type { color:var(--muted); font-size:12px; }
-    .event-title { font-weight:600; overflow-wrap:anywhere; }
-    .event-details { color:var(--muted); font-size:12px; margin-top:3px; white-space:pre-wrap; overflow-wrap:anywhere; }
-    .badge { display:inline-flex; align-items:center; border:1px solid var(--border); border-radius:999px; padding:2px 7px; font-size:11px; }
-    .badge.completed,.badge.ready { color:var(--ok); } .badge.failed { color:var(--bad); } .badge.running { color:var(--accent); }
-    .commands { display:flex; flex-direction:column; gap:9px; }
-    .command { border:1px solid var(--border); border-radius:10px; overflow:hidden; }
-    .command summary { cursor:pointer; padding:10px 12px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:10px; align-items:center; }
-    .command summary::marker { color:var(--muted); }
-    .cmd { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; overflow-wrap:anywhere; }
-    pre { margin:0; padding:12px; background:var(--code); color:#d8e0e8; overflow:auto; max-height:300px; font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; word-break:break-word; }
-    .system { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
-    .row { display:flex; justify-content:space-between; gap:16px; padding:9px 10px; background:var(--panel-2); border-radius:8px; min-width:0; }
-    .row span:last-child { text-align:right; overflow-wrap:anywhere; }
-    .progress-list { display:flex; flex-direction:column; gap:8px; }
-    .progress-item { padding:10px 11px; background:var(--panel-2); border-radius:9px; }
-    .progress-item .meta { color:var(--muted); font-size:12px; margin-top:4px; }
-    .empty { color:var(--muted); padding:16px 2px; }
-    .error { color:var(--bad); }
-    .approval-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
-    .approve { border-color:var(--ok); color:var(--ok); } .deny { border-color:var(--bad); color:var(--bad); }
-    button:disabled { cursor:not-allowed; opacity:.55; }
-    @media (max-width:860px) { .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .event { grid-template-columns:78px minmax(0,1fr) auto; } .event .type { display:none; } .todos,.system { grid-template-columns:1fr; } }
-    @media (max-width:520px) { main { padding:14px; } .top { flex-direction:column; } .grid { grid-template-columns:1fr; } .event { grid-template-columns:70px minmax(0,1fr); } .event .badge { display:none; } }
+    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; }
+    main { max-width:1180px; margin:0 auto; padding:22px; }
+    h1,h2,p { margin:0; }
+    .top { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:16px; }
+    h1 { font-size:22px; font-weight:720; }
+    .subtitle { margin-top:4px; color:var(--muted); }
+    .live { display:flex; align-items:center; gap:8px; color:var(--muted); white-space:nowrap; }
+    .dot { width:9px; height:9px; border-radius:50%; background:var(--green); }
+    .grid3 { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+    .panel,.metric { background:var(--panel); border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow); }
+    .metric { padding:14px 15px; min-height:96px; }
+    .label { color:var(--muted); font-size:12px; }
+    .metric .value { font-size:23px; font-weight:760; margin-top:7px; line-height:1.2; }
+    .metric .detail { color:var(--muted); font-size:12px; margin-top:6px; }
+    .section { margin-top:12px; padding:15px; }
+    .section-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
+    .section-head h2 { font-size:15px; }
+    .small { color:var(--muted); font-size:12px; }
+    .stage { padding:13px 14px; background:var(--soft); border-radius:10px; min-width:0; }
+    .stage.active { outline:1px solid color-mix(in srgb,var(--green) 55%,var(--border)); }
+    .stage .name { font-weight:650; margin-top:4px; overflow-wrap:anywhere; }
+    .stage .time { font-size:20px; font-weight:730; margin-top:8px; font-variant-numeric:tabular-nums; }
+    .tree { display:flex; flex-direction:column; gap:6px; }
+    .tree-node { position:relative; }
+    .task-row { display:grid; grid-template-columns:24px minmax(0,1fr) auto; gap:9px; align-items:start; padding:9px 10px; border-radius:9px; background:var(--soft); border:1px solid transparent; }
+    .task-row.current { background:var(--green-soft); border-color:color-mix(in srgb,var(--green) 55%,var(--border)); }
+    .task-row.current .task-name { color:var(--green); font-weight:750; }
+    .task-row.ancestor { border-left:3px solid color-mix(in srgb,var(--green) 55%,transparent); }
+    .state { width:10px; height:10px; border-radius:50%; margin-top:5px; background:var(--muted); }
+    .state.completed { background:var(--green); }
+    .state.in_progress { background:var(--blue); }
+    .task-name { font-weight:600; overflow-wrap:anywhere; }
+    .task-meta { color:var(--muted); font-size:11px; margin-top:2px; }
+    .children { margin-left:22px; padding-left:12px; border-left:1px solid var(--border); display:flex; flex-direction:column; gap:6px; margin-top:6px; }
+    .file-list { display:flex; flex-direction:column; gap:7px; }
+    .file { display:grid; grid-template-columns:54px minmax(0,1fr) auto; gap:10px; align-items:start; padding:10px 11px; background:var(--soft); border-radius:9px; }
+    .action { font-size:11px; font-weight:700; border:1px solid var(--border); border-radius:999px; text-align:center; padding:2px 6px; }
+    .action.add { color:var(--green); } .action.modify,.action.update { color:var(--blue); } .action.delete { color:var(--red); }
+    .path { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px; overflow-wrap:anywhere; }
+    .rel { color:var(--muted); font-size:11px; margin-top:3px; }
+    .empty { padding:18px 3px; color:var(--muted); }
+    .notice { margin-top:10px; padding:9px 10px; border-radius:8px; background:var(--soft); color:var(--muted); font-size:12px; }
+    .error { color:var(--red); }
+    @media(max-width:760px){ .grid3{grid-template-columns:1fr;} .top{flex-direction:column;} .file{grid-template-columns:50px minmax(0,1fr);} .file-time{display:none;} }
   </style>
 </head>
 <body>
 <main>
   <div class="top">
-    <div class="title"><h1>Local AI Development Bridge</h1><p>本地可观察性与审批控制台 · 自动刷新</p></div>
+    <div>
+      <h1>Local AI Development Bridge</h1>
+      <div class="subtitle">任务执行监视器 · 只展示当前最需要看的四类信息</div>
+    </div>
     <div class="live"><span class="dot" id="live-dot"></span><span id="live-text">正在连接…</span></div>
   </div>
 
-  <section class="grid" aria-label="系统摘要">
-    <div class="card"><div class="label">当前任务</div><div class="value" id="current-task">—</div><div class="sub" id="task-counts">—</div></div>
-    <div class="card"><div class="label">Bridge</div><div class="value" id="bridge-state">—</div><div class="sub" id="bridge-address">—</div></div>
-    <div class="card"><div class="label">VS Code Companion</div><div class="value" id="vscode-state">—</div><div class="sub" id="vscode-detail">—</div></div>
-    <div class="card"><div class="label">终端</div><div class="value" id="terminal-state">—</div><div class="sub" id="terminal-detail">—</div></div>
-    <div class="card"><div class="label">Quick Tunnel</div><div class="value" id="tunnel-state">—</div><div class="sub" id="tunnel-detail">—</div></div>
-    <div class="card"><div class="label">待审批</div><div class="value" id="approval-state">0</div><div class="sub" id="approval-detail">审批门控未启用</div></div>
+  <section class="panel section">
+    <div class="section-head"><h2>AI 输出</h2><span class="small" id="ai-source">等待遥测</span></div>
+    <div class="grid3">
+      <div class="metric"><div class="label">近 1 min 输出量</div><div class="value" id="ai-1m">—</div><div class="detail" id="ai-1m-detail">—</div></div>
+      <div class="metric"><div class="label">近 5 min 输出量</div><div class="value" id="ai-5m">—</div><div class="detail" id="ai-5m-detail">—</div></div>
+      <div class="metric"><div class="label">输出速度（TPS）</div><div class="value" id="ai-tps">—</div><div class="detail" id="ai-tps-detail">—</div></div>
+    </div>
+    <div class="notice" id="ai-note">当前客户端尚未提供助手 token 遥测。这里不会用提示词长度或工具文本伪造 TPS。</div>
   </section>
 
-  <section class="panel task">
-    <div class="task-head"><div><div class="task-title">任务进度</div><div class="task-sub" id="task-updated">尚无任务状态</div></div><strong id="task-percent">0%</strong></div>
-    <div class="bar"><span id="task-bar"></span></div>
-    <div class="todos" id="todos"></div>
+  <section class="panel section">
+    <div class="section-head"><h2>阶段用时</h2><span class="small">由任务状态时间戳自动计算</span></div>
+    <div class="grid3">
+      <div class="stage" id="stage-big"><div class="label">大目标</div><div class="name" id="stage-big-name">—</div><div class="time" id="stage-big-time">—</div></div>
+      <div class="stage" id="stage-mid"><div class="label">分目标</div><div class="name" id="stage-mid-name">—</div><div class="time" id="stage-mid-time">—</div></div>
+      <div class="stage" id="stage-small"><div class="label">小目标</div><div class="name" id="stage-small-name">—</div><div class="time" id="stage-small-time">—</div></div>
+    </div>
   </section>
 
-  <nav class="tabs" aria-label="控制台视图">
-    <button type="button" class="active" data-tab="activity">实时活动</button>
-    <button type="button" data-tab="progress">进度记录</button>
-    <button type="button" data-tab="terminal">终端</button>
-    <button type="button" data-tab="workspaces">工作区</button>
-    <button type="button" data-tab="system">系统状态</button>
-    <button type="button" data-tab="startup">启动状态</button>
-    <button type="button" data-tab="approvals">审批</button>
-  </nav>
-
-  <section class="panel" data-panel="activity">
-    <div class="panel-head"><h2>Activity Timeline</h2><span class="muted" id="activity-count">0 条</span></div>
-    <div class="timeline" id="activity-list"></div>
+  <section class="panel section">
+    <div class="section-head"><h2>任务规划与分级</h2><span class="small">绿色 = 当前正在处理的最细分支</span></div>
+    <div class="tree" id="task-tree"></div>
   </section>
 
-  <section class="panel" data-panel="progress" hidden>
-    <div class="panel-head"><h2>Progress Journal</h2><span class="muted" id="progress-count">0 条</span></div>
-    <div class="progress-list" id="progress-list"></div>
-  </section>
-
-  <section class="panel" data-panel="terminal" hidden>
-    <div class="panel-head"><h2>Terminal Commands</h2><span class="muted" id="command-count">0 条</span></div>
-    <div class="commands" id="commands"></div>
-  </section>
-
-  <section class="panel" data-panel="workspaces" hidden>
-    <div class="panel-head"><h2>Workspaces</h2><span class="muted" id="workspace-count">0 个</span></div>
-    <div class="commands" id="workspace-list"></div>
-  </section>
-
-  <section class="panel" data-panel="system" hidden>
-    <div class="panel-head"><h2>System State</h2><span class="muted">只读</span></div>
-    <div class="system" id="system-grid"></div>
-  </section>
-
-  <section class="panel" data-panel="startup" hidden>
-    <div class="panel-head"><h2>Launcher / Tunnel State</h2><span class="muted">不包含 capability token</span></div>
-    <pre id="launcher-json">尚未由一键启动器管理。</pre>
-  </section>
-
-  <section class="panel" data-panel="approvals" hidden>
-    <div class="panel-head"><h2>Local Approval Queue</h2><span class="muted" id="approval-count">0 条待审批</span></div>
-    <div id="approval-list" class="commands"></div>
+  <section class="panel section">
+    <div class="section-head"><h2>文件变更</h2><span class="small" id="file-count">0 个</span></div>
+    <div class="file-list" id="file-list"></div>
   </section>
 </main>
 <script>
 (() => {
   'use strict';
-  const $ = (id) => document.getElementById(id);
-  const escText = (v) => v == null ? '—' : String(v);
-  const fmtTime = (value) => {
-    if (!value) return '—';
-    const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  const $ = id => document.getElementById(id);
+  const setText = (id, value) => { const el=$(id); if(el) el.textContent=value == null || value === '' ? '—' : String(value); };
+  const fmtTokens = value => {
+    const n=Number(value||0); if(!Number.isFinite(n)) return '—';
+    if(n>=1000000) return `${(n/1000000).toFixed(n>=10000000?1:2)}M tok`;
+    if(n>=1000) return `${(n/1000).toFixed(n>=10000?1:2)}k tok`;
+    return `${Math.round(n)} tok`;
   };
-  const fmtDateTime = (value) => {
-    if (!value) return '—';
-    const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString();
+  const fmtDuration = ms => {
+    const value=Number(ms); if(!Number.isFinite(value) || value<0) return '—';
+    const total=Math.floor(value/1000); const h=Math.floor(total/3600); const m=Math.floor((total%3600)/60); const s=total%60;
+    if(h>0) return `${h}h ${String(m).padStart(2,'0')}m ${String(s).padStart(2,'0')}s`;
+    return `${m}m ${String(s).padStart(2,'0')}s`;
   };
-  const setText = (id, value) => { const el=$(id); if (el) el.textContent=escText(value); };
-  let dashboardToken = null;
-  const badge = (status) => {
-    const s = document.createElement('span'); s.className='badge '+(status||''); s.textContent=status||'unknown'; return s;
+  const liveElapsed = task => {
+    if(!task || !task.started_at) return null;
+    const start=Date.parse(task.started_at); if(!Number.isFinite(start)) return task.elapsed_ms;
+    const end=task.completed_at ? Date.parse(task.completed_at) : Date.now();
+    return Number.isFinite(end) ? Math.max(0,end-start) : task.elapsed_ms;
   };
-  function renderTodos(task, counts) {
-    const host=$('todos'); host.replaceChildren();
-    const todos=Array.isArray(task.todos)?task.todos:[];
-    const total=todos.length; const completed=Number(counts.completed||0);
-    const percent=total?Math.round(completed/total*100):0;
-    $('task-bar').style.width=percent+'%'; setText('task-percent', percent+'%');
-    setText('task-counts', `${completed}/${total} 已完成 · ${counts.in_progress||0} 进行中`);
-    setText('task-updated', task.updated_at ? `更新时间 ${fmtDateTime(task.updated_at)} · progress events ${task.progress_events||0}` : '尚无任务状态');
-    const active=todos.find(x=>x && x.status==='in_progress');
-    setText('current-task', active ? active.content : (total && completed===total ? '全部完成' : '暂无进行中任务'));
-    if (!total) { host.innerHTML='<div class="empty">尚未建立 todo。</div>'; return; }
-    todos.forEach(item => {
-      const row=document.createElement('div'); row.className='todo';
-      const dot=document.createElement('span'); dot.className='state '+item.status;
-      const body=document.createElement('div'); body.className='content';
-      const text=document.createElement('div'); text.textContent=item.content;
-      const small=document.createElement('small'); small.textContent=`${item.id} · ${item.status}`;
-      body.append(text,small); row.append(dot,body); host.append(row);
+  const fmtTime = value => {
+    if(!value) return '';
+    const d=new Date(value); return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  };
+
+  function renderAI(ai){
+    const available=Boolean(ai && ai.available);
+    const one=ai&&ai.one_minute||{}; const five=ai&&ai.five_minutes||{};
+    setText('ai-1m', available ? fmtTokens(one.output_tokens) : '未接入');
+    setText('ai-5m', available ? fmtTokens(five.output_tokens) : '未接入');
+    setText('ai-tps', available && ai.latest_tps!=null ? `${Number(ai.latest_tps).toFixed(1)} tok/s` : '未接入');
+    setText('ai-1m-detail', available ? `${one.events||0} 次输出 · 平均 ${one.avg_tps==null?'—':Number(one.avg_tps).toFixed(1)+' tok/s'}` : '等待客户端自动遥测');
+    setText('ai-5m-detail', available ? `${five.events||0} 次输出 · 平均 ${five.avg_tps==null?'—':Number(five.avg_tps).toFixed(1)+' tok/s'}` : '等待客户端自动遥测');
+    setText('ai-tps-detail', available ? `最近更新 ${fmtTime(ai.latest_at)||'—'}` : '不使用估算值冒充真实 token');
+    setText('ai-source', available ? `${ai.state||'live'} · ${ai.source||'client'}${ai.model?' · '+ai.model:''}` : '未接入 token telemetry');
+    const note=$('ai-note'); note.hidden=available; if(!available) note.textContent=ai&&ai.note||'当前客户端尚未提供助手 token 遥测。';
+  }
+
+  function renderStages(task){
+    const todos=Array.isArray(task&&task.todos)?task.todos:[]; const byId=new Map(todos.map(x=>[String(x.id),x]));
+    const path=Array.isArray(task&&task.active_path)?task.active_path.map(id=>byId.get(String(id))).filter(Boolean):[];
+    let big=null, mid=null, small=null;
+    if(path.length===1){ big=path[0]; }
+    else if(path.length===2){ big=path[0]; mid=path[1]; }
+    else if(path.length>=3){ big=path[0]; mid=path[1]; small=path[path.length-1]; }
+    const rows=[['big',big],['mid',mid],['small',small]];
+    rows.forEach(([key,item])=>{
+      setText(`stage-${key}-name`, item&&item.content||'—'); setText(`stage-${key}-time`, item?fmtDuration(liveElapsed(item)):'—');
+      $(`stage-${key}`).classList.toggle('active', Boolean(item && String(item.id)===String(task.active_leaf_id)));
     });
   }
-  function renderActivity(payload) {
-    const host=$('activity-list'); host.replaceChildren();
-    const events=Array.isArray(payload.events)?payload.events.slice().reverse():[];
-    setText('activity-count', `${events.length} 条`);
-    if (!events.length) { host.innerHTML='<div class="empty">尚无 Activity 事件。</div>'; return; }
-    events.forEach(item=>{
-      const row=document.createElement('div'); row.className='event';
-      const time=document.createElement('div'); time.className='time'; time.textContent=fmtTime(item.timestamp);
-      const type=document.createElement('div'); type.className='type'; type.textContent=item.type||'event';
-      const body=document.createElement('div');
-      const title=document.createElement('div'); title.className='event-title'; title.textContent=item.title||item.type||'event';
-      body.append(title);
-      if (item.details && Object.keys(item.details).length) { const d=document.createElement('div'); d.className='event-details'; d.textContent=JSON.stringify(item.details,null,2); body.append(d); }
-      row.append(time,type,body,badge(item.status)); host.append(row);
-    });
-  }
-  function renderProgress(payload) {
-    const host=$('progress-list'); host.replaceChildren();
-    const events=Array.isArray(payload.events)?payload.events.slice().reverse():[];
-    setText('progress-count', `${events.length} 条`);
-    if (!events.length) { host.innerHTML='<div class="empty">尚无进度记录。</div>'; return; }
-    events.forEach(item=>{
-      const box=document.createElement('div'); box.className='progress-item';
-      const msg=document.createElement('div'); msg.textContent=item.message||'—';
-      const meta=document.createElement('div'); meta.className='meta';
-      const measures=[]; if (item.current!=null && item.total!=null) measures.push(`${item.current}/${item.total}`); if (item.phase!=null && item.phase_total!=null) measures.push(`阶段 ${item.phase}/${item.phase_total}`);
-      meta.textContent=[fmtDateTime(item.created_at), item.todo_id||'未关联 todo', ...measures].join(' · ');
-      box.append(msg,meta); host.append(box);
-    });
-  }
-  function renderCommands(payload) {
-    const host=$('commands'); host.replaceChildren();
-    const commands=Array.isArray(payload.commands)?payload.commands:[];
-    setText('command-count', `${commands.length} 条`);
-    const running=commands.filter(x=>x.status==='running').length;
-    setText('terminal-state', running ? `${running} 运行中` : 'Idle');
-    setText('terminal-detail', `${payload.total_tracked||0} 个已跟踪命令`);
-    if (!commands.length) { host.innerHTML='<div class="empty">当前没有已跟踪终端命令。</div>'; return; }
-    commands.forEach(item=>{
-      const details=document.createElement('details'); details.className='command';
-      const summary=document.createElement('summary');
-      const st=badge(item.status); const cmd=document.createElement('span'); cmd.className='cmd'; cmd.textContent=`[${item.workspace_id||'default'}] ${item.command_preview||'(empty)'}`;
-      const elapsed=document.createElement('span'); elapsed.className='muted'; elapsed.textContent=`${item.elapsed_ms||0} ms`;
-      summary.append(st,cmd,elapsed); details.append(summary);
-      const pre=document.createElement('pre'); pre.textContent=item.output_tail||'(no output)'; details.append(pre); host.append(details);
-    });
-  }
-  function renderWorkspaces(payload, vscode) {
-    const host=$('workspace-list'); host.replaceChildren();
-    const items=Array.isArray(payload.workspaces)?payload.workspaces:[];
-    setText('workspace-count', `${items.length} 个`);
-    if (!items.length) { host.innerHTML='<div class="empty">没有已配置工作区。</div>'; return; }
-    const healthById=new Map((Array.isArray(vscode&&vscode.workspaces)?vscode.workspaces:[]).map(item=>[item.workspace_id,item]));
-    items.forEach(item=>{
-      const box=document.createElement('div'); box.className='command';
-      const wrap=document.createElement('div'); wrap.style.padding='11px 12px';
-      const head=document.createElement('div'); head.style.display='flex'; head.style.justifyContent='space-between'; head.style.gap='10px';
-      const title=document.createElement('strong'); title.textContent=`${item.workspace_id}${item.name?` · ${item.name}`:''}`;
-      const health=healthById.get(item.workspace_id)||{};
-      head.append(title,badge(health.provider_state==='ready'?'ready':'not_ready')); wrap.append(head);
-      const meta=document.createElement('div'); meta.className='event-details';
-      const policy=item.policy_mode||'inherit';
-      const ceiling=`全局上限 W:${item.global_allow_write?'on':'off'} C:${item.global_allow_commands?'on':'off'}`;
-      meta.textContent=`${item.workspace_root||'—'}\n策略 ${policy} · 写入 ${item.allow_write?'Enabled':'Disabled'} · 命令 ${item.allow_commands?'Enabled':'Disabled'} · ${ceiling} · VS Code ${health.provider_state||'unknown'}`;
-      wrap.append(meta); box.append(wrap); host.append(box);
-    });
-  }
-  function renderApprovals(payload, system) {
-    const host=$('approval-list'); host.replaceChildren();
-    const requests=Array.isArray(payload.requests)?payload.requests:[];
-    const pending=requests.filter(item=>item.status==='pending');
-    setText('approval-state', pending.length);
-    setText('approval-count', `${pending.length} 条待审批`);
-    const enabled=Boolean(system.confirm_writes||system.confirm_commands);
-    setText('approval-detail', enabled ? `写入 ${system.confirm_writes?'需确认':'直通'} · 命令 ${system.confirm_commands?'需确认':'直通'}` : '审批门控未启用');
-    if (!requests.length) { host.innerHTML='<div class="empty">当前没有审批请求。</div>'; return; }
-    requests.forEach(item=>{
-      const box=document.createElement('div'); box.className='command';
-      const wrap=document.createElement('div'); wrap.style.padding='11px 12px';
-      const head=document.createElement('div'); head.style.display='flex'; head.style.justifyContent='space-between'; head.style.gap='10px';
-      const title=document.createElement('strong'); title.textContent=item.title||item.action||'Approval';
-      head.append(title,badge(item.status)); wrap.append(head);
-      const meta=document.createElement('div'); meta.className='event-details';
-      meta.textContent=`${item.action||'—'} · ${fmtDateTime(item.created_at)}\n${JSON.stringify(item.details||{},null,2)}`; wrap.append(meta);
-      if(item.status==='pending'){
-        const actions=document.createElement('div'); actions.className='approval-actions';
-        const yes=document.createElement('button'); yes.type='button'; yes.className='approve'; yes.textContent='批准一次';
-        const no=document.createElement('button'); no.type='button'; no.className='deny'; no.textContent='拒绝';
-        yes.addEventListener('click',()=>decideApproval(item.request_id,'approve',yes,no));
-        no.addEventListener('click',()=>decideApproval(item.request_id,'deny',yes,no));
-        actions.append(yes,no); wrap.append(actions);
-      }
-      box.append(wrap); host.append(box);
-    });
-  }
-  async function decideApproval(requestId, decision, ...buttons) {
-    if(!dashboardToken){ setText('live-text','审批失败：Dashboard session 未建立'); return; }
-    buttons.forEach(btn=>btn.disabled=true);
-    try {
-      const res=await fetch(`/api/approvals/${encodeURIComponent(requestId)}`,{
-        method:'POST',
-        headers:{'Content-Type':'application/json','X-Bridge-Dashboard-Token':dashboardToken},
-        body:JSON.stringify({decision})
+
+  function renderTree(task){
+    const host=$('task-tree'); host.replaceChildren();
+    const todos=Array.isArray(task&&task.todos)?task.todos:[]; if(!todos.length){ host.innerHTML='<div class="empty">尚无任务规划。</div>'; return; }
+    const children=new Map(); todos.forEach(item=>{ const parent=item.parent_id==null?'__root__':String(item.parent_id); if(!children.has(parent)) children.set(parent,[]); children.get(parent).push(item); });
+    const activeLeaf=task&&task.active_leaf_id==null?null:String(task.active_leaf_id); const activePath=new Set((task&&task.active_path||[]).map(String));
+    const renderNodes=(parent,container)=>{
+      (children.get(parent)||[]).forEach(item=>{
+        const wrap=document.createElement('div'); wrap.className='tree-node';
+        const row=document.createElement('div'); row.className='task-row';
+        if(String(item.id)===activeLeaf) row.classList.add('current'); else if(activePath.has(String(item.id))) row.classList.add('ancestor');
+        const dot=document.createElement('span'); dot.className='state '+(item.status||'pending');
+        const body=document.createElement('div'); const name=document.createElement('div'); name.className='task-name'; name.textContent=item.content||item.id;
+        const meta=document.createElement('div'); meta.className='task-meta'; const level=Number(item.level||0); meta.textContent=`${level===0?'总任务':level===1?'分任务':'小目标'} · ${item.status||'pending'}${item.started_at?' · '+fmtDuration(liveElapsed(item)):''}`;
+        body.append(name,meta); const marker=document.createElement('div'); marker.className='small'; marker.textContent=String(item.id)===activeLeaf?'当前':'';
+        row.append(dot,body,marker); wrap.append(row);
+        const childItems=children.get(String(item.id))||[]; if(childItems.length){ const sub=document.createElement('div'); sub.className='children'; renderNodes(String(item.id),sub); wrap.append(sub); }
+        container.append(wrap);
       });
-      const payload=await res.json();
-      if(!res.ok) throw new Error(payload.error||`HTTP ${res.status}`);
-      await refresh();
-    } catch(err) {
-      setText('live-text',`审批失败 · ${err.message||err}`);
-      $('live-text').classList.add('error');
-      buttons.forEach(btn=>btn.disabled=false);
-    }
+    };
+    renderNodes('__root__',host);
   }
-  function renderSystem(state) {
-    const s=state.system||{}; const v=state.vscode||{}; const l=state.launcher||{}; const t=l.tunnel||{};
-    setText('bridge-state','Online'); setText('bridge-address',`${s.bridge_host||'127.0.0.1'}:${s.bridge_port||'—'}`);
-    const vsReady=v.provider_state==='ready'; setText('vscode-state',vsReady?'Ready':'Not ready'); setText('vscode-detail',v.provider_state_reason||'—');
-    const tunnelEnabled=l.tunnel_enabled!==false && (l.managed_by_launcher || t.provider);
-    setText('tunnel-state', t.running?'Online':(tunnelEnabled?'Offline':'Disabled'));
-    setText('tunnel-detail', t.public_origin||l.phase||'未由 launcher 管理');
-    setText('launcher-json', JSON.stringify(l,null,2));
-    const localSmoke=l.smoke&&l.smoke.local?l.smoke.local.status:'—'; const publicSmoke=l.smoke&&l.smoke.public?l.smoke.public.status:'—';
-    const items=[
-      ['Default workspace',s.workspace_root],['Workspace count',s.workspace_count||1],['Write permission',s.allow_write?'Enabled':'Disabled'],['Command permission',s.allow_commands?'Enabled':'Disabled'],
-      ['Confirm writes',s.confirm_writes?'Required':'Off'],['Confirm commands',s.confirm_commands?'Required':'Off'],['Approval TTL',s.approval_ttl_seconds?`${s.approval_ttl_seconds}s`:'—'],
-      ['Bridge',`${s.bridge_host}:${s.bridge_port}`],['Dashboard',`127.0.0.1:${s.dashboard_port||'—'}`],['VS Code',v.provider_state||'unknown'],
-      ['VS Code reason',v.provider_state_reason||'—'],['Semantic contract',v.semantic_contract_version?`v${v.semantic_contract_version}`:'legacy'],['LSP timeout',v.lsp_query_timeout_ms?`${v.lsp_query_timeout_ms} ms`:'—'],['Open documents',Array.isArray(v.open_documents)?v.open_documents.length:0],
-      ['Log rotation',s.log_rotation_max_bytes?`${Math.round(s.log_rotation_max_bytes/1024/1024)} MiB × ${s.log_rotation_backups} backups`:'—'],
-      ['Launcher status',l.status||'not_managed'],['Launcher phase',l.phase||'idle'],['Tunnel',t.public_origin||'—'],['Local smoke',localSmoke],['Public smoke',publicSmoke]
-    ];
-    const host=$('system-grid'); host.replaceChildren(); items.forEach(([k,val])=>{const row=document.createElement('div');row.className='row';const a=document.createElement('span');a.className='muted';a.textContent=k;const b=document.createElement('span');b.textContent=escText(val);row.append(a,b);host.append(row);});
+
+  function renderFiles(payload){
+    const host=$('file-list'); host.replaceChildren(); const changes=Array.isArray(payload&&payload.changes)?payload.changes.slice(0,30):[];
+    setText('file-count', `${changes.length} 个`); if(!changes.length){ host.innerHTML='<div class="empty">当前没有检测到文件变更。</div>'; return; }
+    changes.forEach(item=>{
+      const row=document.createElement('div'); row.className='file';
+      const action=document.createElement('span'); action.className='action '+(item.action||'modify'); const actionLabels={add:'新增',create:'新增',modify:'修改',update:'修改',write:'修改',delete:'删除',remove:'删除'}; action.textContent=actionLabels[item.action]||item.action_label||item.action||'修改';
+      const body=document.createElement('div'); const abs=document.createElement('div'); abs.className='path'; abs.textContent=item.absolute_path||item.path||'—';
+      const rel=document.createElement('div'); rel.className='rel'; rel.textContent=`[${item.workspace_id||'default'}] ${item.path||''}`; body.append(abs,rel);
+      const time=document.createElement('span'); time.className='small file-time'; time.textContent=fmtTime(item.timestamp)|| (item.source==='git_status'?'当前':'');
+      row.append(action,body,time); host.append(row);
+    });
   }
-  async function refresh() {
-    try {
-      const res=await fetch('/api/state',{cache:'no-store'}); if(!res.ok) throw new Error(`HTTP ${res.status}`);
-      const state=await res.json();
-      renderTodos(state.task||{},state.todo_counts||{}); renderActivity(state.activity||{}); renderProgress(state.progress||{}); renderCommands(state.commands||{}); renderWorkspaces(state.workspaces||{},state.vscode||{}); renderApprovals(state.approvals||{},state.system||{}); renderSystem(state);
-      $('live-dot').style.background='var(--ok)'; setText('live-text',`已连接 · ${new Date().toLocaleTimeString()}`); $('live-text').classList.remove('error');
-    } catch (err) {
-      $('live-dot').style.background='var(--bad)'; setText('live-text',`连接失败 · ${err.message||err}`); $('live-text').classList.add('error');
-    }
+
+  let lastState=null;
+  function render(state){ lastState=state; renderAI(state.ai_output||{}); renderStages(state.task||{}); renderTree(state.task||{}); renderFiles(state.file_changes||{}); }
+  async function refresh(){
+    try{
+      const res=await fetch('/api/focus',{cache:'no-store'}); if(!res.ok) throw new Error(`HTTP ${res.status}`); const state=await res.json(); render(state);
+      $('live-dot').style.background='var(--green)'; setText('live-text',`已连接 · ${new Date().toLocaleTimeString()}`); $('live-text').classList.remove('error');
+    }catch(err){ $('live-dot').style.background='var(--red)'; setText('live-text',`连接失败 · ${err.message||err}`); $('live-text').classList.add('error'); }
+    setTimeout(refresh,1500);
   }
-  document.querySelectorAll('[data-tab]').forEach(btn=>btn.addEventListener('click',()=>{
-    document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b===btn));
-    document.querySelectorAll('[data-panel]').forEach(p=>p.hidden=p.dataset.panel!==btn.dataset.tab);
-  }));
-  async function initSession() {
-    try {
-      const res=await fetch('/api/session',{cache:'no-store'});
-      if(!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data=await res.json(); dashboardToken=data.dashboard_token||null;
-    } catch(err) { dashboardToken=null; }
-  }
-  async function pollLoop() { await refresh(); setTimeout(pollLoop,1500); }
-  initSession().finally(pollLoop);
+  setInterval(()=>{ if(lastState) renderStages(lastState.task||{}); },1000);
+  refresh();
 })();
 </script>
 </body>

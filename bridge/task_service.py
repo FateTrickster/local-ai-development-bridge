@@ -20,6 +20,23 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _parse_iso(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _elapsed_ms(started_at: Any, completed_at: Any = None) -> int | None:
+    started = _parse_iso(started_at)
+    if started is None:
+        return None
+    completed = _parse_iso(completed_at) or datetime.now(timezone.utc)
+    return max(0, round((completed - started).total_seconds() * 1000))
+
+
 class TaskService:
     def __init__(
         self,
@@ -81,6 +98,46 @@ class TaskService:
     def get_state(self) -> dict[str, Any]:
         with self._lock:
             snapshot = self._load_snapshot()
+            raw_todos = snapshot.get("todos", []) if isinstance(snapshot.get("todos"), list) else []
+            by_id = {
+                str(item.get("id")): item
+                for item in raw_todos
+                if isinstance(item, dict) and item.get("id")
+            }
+
+            def depth(todo_id: str) -> int:
+                seen: set[str] = set()
+                current = by_id.get(todo_id)
+                value = 0
+                while isinstance(current, dict) and current.get("parent_id"):
+                    parent_id = str(current.get("parent_id"))
+                    if parent_id in seen or parent_id not in by_id:
+                        break
+                    seen.add(parent_id)
+                    value += 1
+                    current = by_id[parent_id]
+                return value
+
+            enriched: list[dict[str, Any]] = []
+            for item in raw_todos:
+                if not isinstance(item, dict):
+                    continue
+                current = dict(item)
+                current["level"] = depth(str(current.get("id", "")))
+                current["elapsed_ms"] = _elapsed_ms(current.get("started_at"), current.get("completed_at"))
+                enriched.append(current)
+
+            in_progress = [item for item in enriched if item.get("status") == "in_progress"]
+            active_leaf = max(in_progress, key=lambda item: int(item.get("level", 0)), default=None)
+            active_path: list[str] = []
+            if active_leaf is not None:
+                cursor: dict[str, Any] | None = active_leaf
+                while cursor is not None:
+                    active_path.append(str(cursor.get("id")))
+                    parent_id = cursor.get("parent_id")
+                    cursor = by_id.get(str(parent_id)) if parent_id else None
+                active_path.reverse()
+
             progress_count = 0
             for segment in self._segments():
                 try:
@@ -88,7 +145,13 @@ class TaskService:
                         progress_count += sum(1 for line in handle if line.strip())
                 except OSError:
                     continue
-            return {**snapshot, "progress_events": progress_count}
+            return {
+                **snapshot,
+                "todos": enriched,
+                "active_leaf_id": active_leaf.get("id") if active_leaf else None,
+                "active_path": active_path,
+                "progress_events": progress_count,
+            }
 
     def get_progress_events(self, limit: int = 100, after_seq: int | None = None) -> dict[str, Any]:
         limit = max(1, min(int(limit), 500))
@@ -157,15 +220,18 @@ class TaskService:
         }
 
     def set_todos(self, todos: list[dict[str, Any]]) -> dict[str, Any]:
-        if len(todos) > 24:
+        if len(todos) > 64:
             raise ValueError("TOO_MANY_TODOS")
         ids: set[str] = set()
-        normalized: list[dict[str, str]] = []
-        in_progress = 0
+        normalized: list[dict[str, Any]] = []
         for raw in todos:
             todo_id = str(raw.get("id", "")).strip()
             content = str(raw.get("content", "")).strip()
             status = str(raw.get("status", "")).strip()
+            raw_parent = raw.get("parent_id")
+            parent_id = str(raw_parent).strip() if raw_parent is not None else None
+            if parent_id == "":
+                parent_id = None
             if not todo_id or len(todo_id) > 80:
                 raise ValueError("INVALID_TODO_ID")
             if todo_id in ids:
@@ -174,24 +240,90 @@ class TaskService:
                 raise ValueError(f"INVALID_TODO_CONTENT: {todo_id}")
             if status not in {"pending", "in_progress", "completed"}:
                 raise ValueError(f"INVALID_TODO_STATUS: {todo_id}")
-            if status == "in_progress":
-                in_progress += 1
+            if parent_id is not None and len(parent_id) > 80:
+                raise ValueError(f"INVALID_PARENT_ID: {todo_id}")
             ids.add(todo_id)
-            normalized.append({"id": todo_id, "content": content, "status": status})
-        if in_progress > 1:
-            raise ValueError("MULTIPLE_IN_PROGRESS_TODOS")
+            normalized.append({
+                "id": todo_id,
+                "content": content,
+                "status": status,
+                "parent_id": parent_id,
+            })
 
+        by_id = {item["id"]: item for item in normalized}
+        for item in normalized:
+            parent_id = item.get("parent_id")
+            if parent_id is not None and parent_id not in by_id:
+                raise ValueError(f"UNKNOWN_PARENT_ID: {item['id']} -> {parent_id}")
+            if parent_id == item["id"]:
+                raise ValueError(f"TODO_PARENT_CYCLE: {item['id']}")
+
+        def ancestors(todo_id: str) -> list[str]:
+            result: list[str] = []
+            seen: set[str] = set()
+            cursor = by_id[todo_id]
+            while cursor.get("parent_id") is not None:
+                parent_id = str(cursor["parent_id"])
+                if parent_id in seen:
+                    raise ValueError(f"TODO_PARENT_CYCLE: {todo_id}")
+                seen.add(parent_id)
+                result.append(parent_id)
+                cursor = by_id[parent_id]
+            return result
+
+        depths: dict[str, int] = {}
+        for item in normalized:
+            depths[item["id"]] = len(ancestors(item["id"]))
+
+        in_progress_ids = [item["id"] for item in normalized if item["status"] == "in_progress"]
+        active_leaf_id: str | None = None
+        if in_progress_ids:
+            active_leaf_id = max(in_progress_ids, key=lambda todo_id: depths[todo_id])
+            active_chain = set(ancestors(active_leaf_id)) | {active_leaf_id}
+            if any(todo_id not in active_chain for todo_id in in_progress_ids):
+                raise ValueError("MULTIPLE_IN_PROGRESS_TODOS")
+            if any(by_id[todo_id]["status"] == "completed" for todo_id in ancestors(active_leaf_id)):
+                raise ValueError("ACTIVE_CHILD_OF_COMPLETED_TASK")
+
+        now = _now_iso()
         with self._lock:
             previous = self._load_snapshot()
+            previous_by_id = {
+                str(item.get("id")): item
+                for item in previous.get("todos", [])
+                if isinstance(item, dict) and item.get("id")
+            }
+
+            for item in normalized:
+                old = previous_by_id.get(item["id"], {})
+                created_at = old.get("created_at") or now
+                started_at = old.get("started_at")
+                completed_at = old.get("completed_at") if item["status"] == "completed" else None
+                if item["status"] == "in_progress" and not started_at:
+                    started_at = now
+                if item["status"] == "completed":
+                    started_at = started_at or old.get("created_at") or now
+                    completed_at = completed_at or now
+                item["created_at"] = created_at
+                item["started_at"] = started_at
+                item["completed_at"] = completed_at
+
+            if active_leaf_id is not None:
+                active_chain = list(reversed(ancestors(active_leaf_id))) + [active_leaf_id]
+                for todo_id in active_chain:
+                    item = by_id[todo_id]
+                    if not item.get("started_at"):
+                        item["started_at"] = now
+
             snapshot = {
                 "version": int(previous.get("version", 0)) + 1,
                 "todos": normalized,
-                "updated_at": _now_iso(),
+                "updated_at": now,
             }
             temporary = self.todo_file.with_suffix(".tmp")
             temporary.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
             temporary.replace(self.todo_file)
-            return snapshot
+            return self.get_state()
 
     def report_progress(
         self,
@@ -218,13 +350,7 @@ class TaskService:
             snapshot = self._load_snapshot()
             todo_ids = {item["id"] for item in snapshot.get("todos", []) if isinstance(item, dict) and "id" in item}
             if todo_id is None:
-                active = [
-                    item["id"]
-                    for item in snapshot.get("todos", [])
-                    if isinstance(item, dict) and item.get("status") == "in_progress"
-                ]
-                if len(active) == 1:
-                    todo_id = active[0]
+                todo_id = self.get_state().get("active_leaf_id")
             elif todo_id not in todo_ids:
                 raise ValueError(f"UNKNOWN_TODO_ID: {todo_id}")
 

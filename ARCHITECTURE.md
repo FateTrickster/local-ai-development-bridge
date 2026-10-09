@@ -144,3 +144,7 @@ ready / supervise children
 - `.github/workflows/ci.yml`：Windows + Linux Python tests、secret scan、VS Code compile/VSIX artifact。
 - `.github/workflows/release.yml`：`v*` tag 触发 Windows 验证、版本一致性检查、VSIX/source ZIP/SHA256SUMS 构建与 GitHub Release。
 - 根目录 `VERSION` 与 `vscode-companion/package.json` version 必须保持一致。
+
+## 7. Focused Dashboard projection
+
+默认 Dashboard 不是 Activity 原始日志浏览器，而是一个只读投影层：`AITelemetryService + TaskService + Activity/Git file changes -> DashboardService.focus_snapshot() -> /api/focus -> dashboard/index.html`。完整 observability/control plane 保留在 `/advanced.html`。AI token telemetry 只有在兼容本地 client 自动提交 exact usage 时才显示，MCP Bridge 不做 Prompt 驱动的估算。
