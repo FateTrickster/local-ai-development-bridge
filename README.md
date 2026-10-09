@@ -150,7 +150,8 @@ $env:BRIDGE_ALLOWED_ORIGINS = "https://xxxx.trycloudflare.com"
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `WORKSPACE_ROOT` | 当前目录的上级 | 工作区根，所有路径不得越出 |
+| `WORKSPACE_ROOT` | 当前目录的上级 | 默认工作区根，所有相对路径不得越出该根 |
+| `BRIDGE_WORKSPACES_JSON` | 空 | 额外工作区 JSON 数组；推荐由 Launcher `--extra-workspace ID=PATH` 自动生成 |
 | `ALLOW_WRITE` | `0` | 是否允许 `write_file` / `apply_patch` |
 | `ALLOW_COMMANDS` | `0` | 是否允许 `run_command` |
 | `BRIDGE_HOST` | `127.0.0.1` | MCP 监听地址 |
@@ -179,6 +180,30 @@ $env:BRIDGE_ALLOWED_ORIGINS = "https://xxxx.trycloudflare.com"
 - `ALLOW_COMMANDS=1`
 
 两种模式默认都只监听 `127.0.0.1`，公网访问必须经过 Tunnel。
+
+## 多工作区
+
+Bridge 现在使用显式 `workspace_id` 管理多个互相隔离的本地根目录。原有 `WORKSPACE_ROOT` 自动成为 `workspace_id=default`，因此不传 `workspace_id` 的旧客户端行为保持不变。
+
+推荐通过 Launcher 添加额外工作区：
+
+```powershell
+.\start.cmd --workspace D:\Projects\main --extra-workspace docs=D:\Docs --extra-workspace backend=D:\Projects\backend
+```
+
+可重复传入 `--extra-workspace ID=PATH`。`ID` 只允许字母、数字、点、下划线和连字符，且每个 ID 必须唯一，工作区根目录必须存在、唯一且彼此不能父子嵌套。Launcher 会校验目录并把配置作为 `BRIDGE_WORKSPACES_JSON` 传给 Bridge。手动启动时也可以直接设置该环境变量。
+
+MCP 新增 `list_workspaces`；文件、搜索、Patch、终端和 VS Code 工具均接受可选 `workspace_id`：
+
+- 省略 `workspace_id` → 使用 `default`，完全兼容原有调用；
+- 指定 `workspace_id` → 只在对应根目录内执行；
+- 每个工作区都有独立 `WorkspaceGuard`、File/Patch/Terminal/VS Code context；
+- 一个工作区不能通过 `..` 或符号链接访问另一个工作区；
+- PTY `command_id` 会自动路由回创建它的工作区；
+- Activity、终端快照和 Dashboard 显示 `workspace_id`；
+- 写入/命令审批 fingerprint 包含 `workspace_id`，批准不能跨工作区复用。
+
+Dashboard 增加“工作区”页，可同时查看各 workspace root、权限和 VS Code readiness。
 
 ## 安全修改机制
 
@@ -217,11 +242,11 @@ Dashboard 当前显示：
 - 结构化 Activity Timeline；
 - `progress.jsonl` 中的具体进度事件；
 - 当前/最近 PTY 命令、状态、耗时和脱敏后的输出尾部；
-- Bridge 工作区与权限；
-- VS Code Companion ready/not_ready 状态；
+- 默认工作区、全部已配置工作区及权限；
+- 每个工作区的 VS Code Companion ready/not_ready 状态；
 - Launcher 当前阶段、Quick Tunnel 公网 origin、local/public smoke test 结果。
 
-Dashboard 只提供 GET 只读接口，固定绑定 `127.0.0.1`，与公网 MCP Tunnel 分离。MCP 另外提供：
+Dashboard 固定绑定 `127.0.0.1`，与公网 MCP Tunnel 分离。除本机审批 approve/deny 外，其余 Dashboard 状态接口均为只读。MCP 另外提供：
 
 - `get_activity`
 - `get_progress_events`
@@ -272,7 +297,7 @@ $env:BRIDGE_APPROVAL_TTL_SECONDS = "300"
 
 CI 工作流：
 
-- Windows + Linux Python 单元测试；
+- Windows + Ubuntu + macOS Python 单元测试；
 - Python `compileall`；
 - 内置 `scripts/secret_scan.py` 凭据扫描；
 - VS Code Companion `npm ci` / TypeScript compile；
@@ -342,7 +367,7 @@ LSP 查询使用 semantic contract v2，不再把所有空数组都视为同一�
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-当前路线见 `ROADMAP.md`，本轮完整优化审查见 `OPTIMIZATION_PLAN.md`。P1 一键启动、P2 CI/Release、P3 LSP semantic contract、P4 稳定性与 P5 本机一次性审批门控已实现；下一重点是多工作区模型。
+当前路线见 `ROADMAP.md`，本轮完整优化审查见 `OPTIMIZATION_PLAN.md`。一键启动、CI/Release、LSP semantic contract、跨平台稳定性、本机一次性审批门控与显式多工作区模型均已实现；下一重点是更细的进程树/资源使用统计与工作区级策略配置。
 
 ## License
 

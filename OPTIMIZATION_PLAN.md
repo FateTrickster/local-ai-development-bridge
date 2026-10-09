@@ -465,3 +465,48 @@ Dashboard 增加“待审批”摘要卡和“审批”页，可以看到 pendin
 - Secret Scan、TypeScript compile、Dashboard JS syntax 均通过。
 
 下一阶段：多工作区模型。建议不要把多个 root 硬塞进现有 path 字符串，而是引入显式 `workspace_id` / workspace registry，使权限、Activity、审批与 VS Code workspace 都能够按 workspace 归属。
+
+## 13. P6 显式多工作区模型实施结果（2026-10-09）
+
+本阶段把原先单一 `WORKSPACE_ROOT` 模型升级为显式 workspace registry，同时保留所有旧客户端默认行为。
+
+### 13.1 WorkspaceRegistry
+
+新增 `bridge/workspace_registry.py`：
+
+- `WORKSPACE_ROOT` 固定注册为 `workspace_id=default`；
+- 额外工作区通过 `BRIDGE_WORKSPACES_JSON` 注册；
+- workspace id 有严格格式与唯一性检查；
+- root 必须真实存在、不能重复，也不能与其他 workspace root 形成父子嵌套；
+- 每个 workspace context 独立持有 WorkspaceGuard、FileService、PatchService、TerminalService 与 VSCodeService。
+
+所有路径仍然是“相对当前 workspace root”的路径，不建立跨 root 的虚拟路径层，因此原有 path traversal / symlink escape 安全边界继续成立。
+
+### 13.2 MCP 工具与审批/Activity
+
+新增 `list_workspaces`。文件、搜索、Patch、`run_command`、diagnostics、LSP 与 editor buffer 工具新增可选 `workspace_id`；省略时使用 `default`。终端后续操作通过 `command_id` 自动回到创建命令的 workspace，不要求客户端重复传 workspace_id。
+
+`write_file` / `apply_patch` / `run_command` 的 approval fingerprint 现在包含 workspace_id，批准不能在另一个 workspace 复用。Activity 与 Terminal snapshots 同步记录 workspace_id。
+
+### 13.3 Dashboard 与 Launcher
+
+Dashboard 新增 Workspaces 页与 `/api/workspaces`，并聚合所有 workspace 的 terminal commands 与 VS Code health。
+
+Launcher 新增可重复参数：
+
+```text
+--extra-workspace ID=PATH
+```
+
+启动前校验 ID、目录存在性、root/ID 重复；然后只向 server 注入规范化后的 `BRIDGE_WORKSPACES_JSON`。旧环境未配置 extra workspace 时不设置该变量。
+
+### 13.4 验证
+
+- Python tests：70/70 通过；
+- WorkspaceRegistry 专项：默认兼容、显式选择、跨 root 路径阻断、command_id workspace routing 全部通过；
+- 真实 MCP E2E：24 tools；`list_workspaces` 返回 default/docs；同名文件按 workspace 隔离读取；docs workspace 写入不会落到 default；PTY 命令输出自动标记 docs；Activity 可见 workspace_id；
+- Dashboard E2E：workspace_count=2，聚合命令包含 workspace_id；
+- Launcher --no-tunnel --exit-after-ready + --extra-workspace docs=... 真机启动通过，24 tools smoke 通过；
+- `P6_MULTI_WORKSPACE_SMOKE_OK`。
+
+下一阶段建议：工作区级权限策略（例如某 workspace 只读、另一个允许命令）、进程树/CPU/内存统计，以及 Dashboard 的 workspace 过滤器。

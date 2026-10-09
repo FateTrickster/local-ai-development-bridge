@@ -14,8 +14,7 @@ from .config import Settings
 from .launcher_state import LauncherStateStore
 from .jsonl_utils import JsonlRotationPolicy
 from .task_service import TaskService
-from .terminal_service import TerminalService
-from .vscode_service import VSCodeService
+from .workspace_registry import WorkspaceRegistry
 
 
 _PACKAGE_ROOT = Path(__file__).resolve().parent.parent
@@ -23,28 +22,21 @@ _DASHBOARD_HTML = _PACKAGE_ROOT / "dashboard" / "index.html"
 
 
 class DashboardService:
-    """Localhost control plane for observability and explicit approvals.
-
-    This server intentionally runs on a separate localhost-only port so it is not
-    exposed through the MCP Quick Tunnel. Mutations are limited to approve/deny
-    decisions and require a same-origin-only dashboard token header.
-    """
+    """Localhost observability/control plane with multi-workspace awareness."""
 
     def __init__(
         self,
         settings: Settings,
         activity: ActivityService,
         tasks: TaskService,
-        terminal: TerminalService,
-        vscode: VSCodeService,
+        registry: WorkspaceRegistry,
         launcher_state: LauncherStateStore | None = None,
         approvals: ApprovalService | None = None,
     ):
         self.settings = settings
         self.activity = activity
         self.tasks = tasks
-        self.terminal = terminal
-        self.vscode = vscode
+        self.registry = registry
         self.launcher_state = launcher_state or LauncherStateStore()
         self.approvals = approvals or ApprovalService(ttl_seconds=settings.approval_ttl_seconds)
         self._server: ThreadingHTTPServer | None = None
@@ -55,8 +47,9 @@ class DashboardService:
         task_state = self.tasks.get_state()
         progress = self.tasks.get_progress_events(limit=100)
         activity = self.activity.list_events(limit=200)
-        commands = self.terminal.list_commands(limit=20, tail_bytes=4096)
-        vscode = self.vscode.health()
+        commands = self.registry.list_commands(limit=40, tail_bytes=4096)
+        vscode = self.registry.vscode_health()
+        workspaces = self.registry.list_workspaces(include_vscode=False)
         launcher = self.launcher_state.read()
         approval_state = self.approvals.list_requests(include_terminal=True, limit=100)
         rotation = JsonlRotationPolicy.from_env()
@@ -69,6 +62,8 @@ class DashboardService:
         return {
             "system": {
                 "workspace_root": str(self.settings.workspace_root),
+                "default_workspace_id": "default",
+                "workspace_count": workspaces.get("count", 1),
                 "allow_write": self.settings.allow_write,
                 "allow_commands": self.settings.allow_commands,
                 "bridge_host": self.settings.bridge_host,
@@ -81,6 +76,7 @@ class DashboardService:
                 "confirm_commands": self.settings.confirm_commands,
                 "approval_ttl_seconds": self.settings.approval_ttl_seconds,
             },
+            "workspaces": workspaces,
             "task": task_state,
             "todo_counts": counts,
             "progress": progress,
@@ -95,7 +91,7 @@ class DashboardService:
         service = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "LocalAIBridgeDashboard/0.3"
+            server_version = "LocalAIBridgeDashboard/0.4"
 
             def log_message(self, format: str, *args: Any) -> None:
                 return
@@ -162,13 +158,16 @@ class DashboardService:
                     raise ValueError("JSON_OBJECT_REQUIRED")
                 return payload
 
-            def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
+            def do_GET(self) -> None:  # noqa: N802
                 parsed = urlparse(self.path)
                 if parsed.path in {"/", "/index.html"}:
                     self._html()
                     return
                 if parsed.path == "/api/state":
                     self._json(200, service.snapshot())
+                    return
+                if parsed.path == "/api/workspaces":
+                    self._json(200, service.registry.list_workspaces(include_vscode=True))
                     return
                 if parsed.path == "/api/activity":
                     query = parse_qs(parsed.query)
@@ -206,7 +205,7 @@ class DashboardService:
                     return
                 self._json(404, {"error": "not_found"})
 
-            def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
+            def do_POST(self) -> None:  # noqa: N802
                 if not self._mutation_authorized():
                     self._json(403, {"error": "dashboard_mutation_forbidden"})
                     return

@@ -16,11 +16,11 @@ CapabilityAuthApp
         ▼
 FastMCP / Streamable HTTP
         │
-        ├── FileService / WorkspaceGuard
-        ├── PatchService
-        ├── TerminalService (persistent PTY)
+        ├── WorkspaceRegistry
+        │     ├── default → WorkspaceGuard / File / Patch / PTY / VS Code
+        │     └── extra-* → WorkspaceGuard / File / Patch / PTY / VS Code
         ├── TaskService
-        ├── VSCodeService ──► VS Code Companion :8765
+        ├── ApprovalService
         └── ActivityService
 
 Launcher / Tunnel Manager
@@ -42,6 +42,12 @@ Local Dashboard :8766
 Dashboard 固定绑定 `127.0.0.1`，不会通过 MCP Quick Tunnel 暴露。
 
 ## 2. 服务层
+
+### WorkspaceRegistry
+
+`WORKSPACE_ROOT` 始终注册为 `workspace_id=default`，保持单工作区客户端向后兼容。额外根目录通过 `BRIDGE_WORKSPACES_JSON` 或 Launcher `--extra-workspace ID=PATH` 显式注册。workspace root 之间禁止重复或父子嵌套；每个 context 独立创建 WorkspaceGuard、FileService、PatchService、TerminalService 与 VSCodeService；工具只能通过显式 workspace_id 选择 context，不允许把多个 root 拼进一个 path 命名空间。
+
+终端 command_id 由 Registry 反向定位所属 workspace；Dashboard 对命令和 VS Code health 做跨 workspace 聚合。审批 fingerprint 和 Activity details 同样携带 workspace_id，防止批准或审计语义跨工作区混淆。
 
 ### WorkspaceGuard
 
@@ -86,7 +92,8 @@ LSP 层使用 semantic contract v2：传输层 `provider_state` 与语义查询�
 - capability URL 与 Bearer token 均可认证；未授权路径返回 404。
 - `.runtime/` 与 `.audit/` 不进入 Git。
 - Activity / Launcher 状态不保存 capability token 或完整 capability URL。
-- `ALLOW_WRITE` 与 `ALLOW_COMMANDS` 独立控制。
+- `ALLOW_WRITE` 与 `ALLOW_COMMANDS` 独立控制；当前权限策略由所有 workspace 继承，workspace 选择本身不能提升权限。
+- 每个 workspace 使用独立 root guard；跨 workspace 访问必须显式切换 `workspace_id`，不能通过路径穿越。
 - Dashboard localhost-only；唯一 mutation 是 approval approve/deny，不提供直接写文件或执行命令接口。
 
 ## 4. 运行时数据

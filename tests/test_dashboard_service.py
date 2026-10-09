@@ -20,6 +20,7 @@ class _FakeTerminal:
         return {
             "commands": [
                 {
+                    "workspace_id": "default",
                     "command_id": "cmd-1",
                     "command_preview": "python -m unittest",
                     "cwd": ".",
@@ -44,6 +45,54 @@ class _FakeVSCode:
             "workspace_folders": [],
             "open_documents": [],
         }
+
+
+class _FakeRegistry:
+    def __init__(self):
+        self.terminal = _FakeTerminal()
+        self.vscode = _FakeVSCode()
+
+    def list_commands(self, limit: int = 20, tail_bytes: int = 4096):
+        return self.terminal.list_commands(limit, tail_bytes)
+
+    def vscode_health(self):
+        health = self.vscode.health()
+        return {
+            **health,
+            "workspace_id": "default",
+            "workspaces": [
+                {"workspace_id": "default", **health},
+                {
+                    "workspace_id": "docs",
+                    "provider_state": "not_ready",
+                    "provider_state_reason": "VSCODE_WORKSPACE_MISMATCH",
+                    "results": [],
+                },
+            ],
+        }
+
+    def list_workspaces(self, *, include_vscode: bool = False):
+        items = [
+            {
+                "workspace_id": "default",
+                "name": "Default workspace",
+                "workspace_root": "D:/default",
+                "allow_write": True,
+                "allow_commands": True,
+            },
+            {
+                "workspace_id": "docs",
+                "name": "Docs",
+                "workspace_root": "D:/docs",
+                "allow_write": True,
+                "allow_commands": True,
+            },
+        ]
+        if include_vscode:
+            health = {item["workspace_id"]: item for item in self.vscode_health()["workspaces"]}
+            for item in items:
+                item["vscode"] = health[item["workspace_id"]]
+        return {"default_workspace_id": "default", "workspaces": items, "count": 2}
 
 
 class DashboardServiceTests(unittest.TestCase):
@@ -85,12 +134,12 @@ class DashboardServiceTests(unittest.TestCase):
         self.tasks.set_todos([{"id": "a", "content": "dashboard test", "status": "in_progress"}])
         self.tasks.report_progress("working", current=1, total=2)
         self.activity.emit("test", status="completed", title="dashboard event")
+        self.registry = _FakeRegistry()
         self.service = DashboardService(
             self.settings,
             self.activity,
             self.tasks,
-            _FakeTerminal(),  # type: ignore[arg-type]
-            _FakeVSCode(),  # type: ignore[arg-type]
+            self.registry,  # type: ignore[arg-type]
             self.launcher_state,
             self.approvals,
         )
@@ -99,18 +148,21 @@ class DashboardServiceTests(unittest.TestCase):
         self.service.stop()
         self.temp.cleanup()
 
-    def test_snapshot_contains_observability_and_approval_sections(self) -> None:
+    def test_snapshot_contains_observability_approval_and_workspace_sections(self) -> None:
         request = self.approvals.request(
             "write_file",
-            {"path": "a.txt", "content_sha256": "abc"},
+            {"workspace_id": "default", "path": "a.txt", "content_sha256": "abc"},
             title="write a.txt",
         )
         state = self.service.snapshot()
         self.assertEqual(state["todo_counts"]["in_progress"], 1)
         self.assertEqual(len(state["progress"]["events"]), 1)
         self.assertGreaterEqual(len(state["activity"]["events"]), 1)
+        self.assertEqual(state["commands"]["commands"][0]["workspace_id"], "default")
         self.assertEqual(state["commands"]["commands"][0]["status"], "completed")
         self.assertEqual(state["vscode"]["provider_state"], "ready")
+        self.assertEqual(state["workspaces"]["count"], 2)
+        self.assertEqual(state["system"]["workspace_count"], 2)
         self.assertEqual(state["launcher"]["phase"], "ready")
         self.assertTrue(state["launcher"]["tunnel"]["running"])
         self.assertEqual(state["approvals"]["pending"], 1)
@@ -130,10 +182,10 @@ class DashboardServiceTests(unittest.TestCase):
         )
         return urllib.request.urlopen(req, timeout=3)
 
-    def test_local_http_dashboard_session_and_approval_decision(self) -> None:
+    def test_local_http_dashboard_session_workspace_api_and_approval_decision(self) -> None:
         request = self.approvals.request(
             "run_command",
-            {"command": "echo test", "cwd": "."},
+            {"workspace_id": "docs", "command": "echo test", "cwd": "."},
             title="run command",
         )
         started = self.service.start()
@@ -143,11 +195,16 @@ class DashboardServiceTests(unittest.TestCase):
             html = response.read().decode("utf-8")
             self.assertEqual(response.status, 200)
             self.assertIn("Local Approval Queue", html)
+            self.assertIn("Workspaces", html)
             self.assertIn("批准一次", html)
         with urllib.request.urlopen(base + "/api/session", timeout=3) as response:
             session = json.loads(response.read().decode("utf-8"))
             token = session["dashboard_token"]
             self.assertTrue(session["confirm_writes"])
+        with urllib.request.urlopen(base + "/api/workspaces", timeout=3) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(payload["count"], 2)
+            self.assertEqual(payload["workspaces"][1]["workspace_id"], "docs")
         with urllib.request.urlopen(base + "/api/state", timeout=3) as response:
             payload = json.loads(response.read().decode("utf-8"))
             self.assertEqual(payload["approvals"]["pending"], 1)
@@ -159,7 +216,7 @@ class DashboardServiceTests(unittest.TestCase):
     def test_approval_post_rejects_missing_token_and_cross_origin(self) -> None:
         request = self.approvals.request(
             "write_file",
-            {"path": "a.txt"},
+            {"workspace_id": "default", "path": "a.txt"},
             title="write",
         )
         started = self.service.start()
