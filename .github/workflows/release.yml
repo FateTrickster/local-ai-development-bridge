@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  verify-windows:
+    name: Verify Windows runtime
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run full Windows tests
+        run: python -m unittest discover -s tests -v
+
+  release:
+    name: Build release artifacts
+    needs: verify-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: vscode-companion/package-lock.json
+
+      - name: Verify tag and versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          EXT_VERSION="$(node -p "require('./vscode-companion/package.json').version")"
+          if [[ "$GITHUB_REF_NAME" != "v$VERSION" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match VERSION=$VERSION" >&2
+            exit 1
+          fi
+          if [[ "$EXT_VERSION" != "$VERSION" ]]; then
+            echo "VS Code extension version $EXT_VERSION does not match VERSION=$VERSION" >&2
+            exit 1
+          fi
+
+      - name: Install and test Python package
+        run: |
+          python -m pip install -r requirements.txt
+          python -m unittest discover -s tests -v
+          python scripts/secret_scan.py
+
+      - name: Build VS Code Companion
+        working-directory: vscode-companion
+        run: |
+          npm ci
+          npm run compile
+
+      - name: Build release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          mkdir -p dist
+          npm --prefix vscode-companion run package -- --out "../dist/local-ai-development-bridge-vscode-${VERSION}.vsix"
+          git archive --format=zip --output="dist/local-ai-development-bridge-${VERSION}.zip" HEAD
+          (cd dist && sha256sum *.zip *.vsix > SHA256SUMS.txt)
+          ls -lh dist
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ github.ref_name }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+          fi

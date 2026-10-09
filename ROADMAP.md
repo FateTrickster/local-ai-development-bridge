@@ -76,7 +76,7 @@
 - 更丰富的运行耗时/失败统计
 - VS Code 内嵌 Status Bar / Tree View 或 Webview
 
-## P2.0：一键启动与 Tunnel Manager
+## P2.0：一键启动与 Tunnel Manager（已完成）
 
 - 自动检查 Python / cloudflared / VS Code Companion
 - 启动 Quick Tunnel
@@ -87,14 +87,15 @@
 - 输出脱敏公网地址与本地 Dashboard 地址
 - 启停与重连状态管理
 
-## P2.1：GitHub 工程化与 Release
+## P2.1：GitHub 工程化与 Release（已完成）
 
-- Python unit test CI
+- Windows + Linux Python unit test CI
 - TypeScript compile CI
-- secret scan
-- VSIX artifact
+- 内置 secret scan（tracked + untracked non-ignored）
+- CI VSIX artifact
+- `VERSION` / extension version 一致性检查
 - tag / changelog / GitHub Release
-- 可下载版本包
+- VSIX + source ZIP + SHA256SUMS release 产物
 
 ## P2.2：VS Code LSP 可靠性强化
 

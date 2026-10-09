@@ -328,3 +328,29 @@ P1 已完成第一版产品化启动链：
 P1 验证过程中发现并修复了一个真实缺陷：最初的 URL 正则会从 cloudflared 错误日志中把 `https://api.trycloudflare.com` 误识别成 Quick Tunnel origin。修复后仅接受实际生成的 Quick Tunnel hostname，并重新完成真实公网 E2E。
 
 下一阶段进入 P2：GitHub CI / Release / VSIX 分发自动化。
+
+
+## 9. P2 GitHub CI / Release / VSIX 实施结果（2026-10-09）
+
+P2 已完成第一版持续集成与可分发构建链：
+
+- 新增 `.github/workflows/ci.yml`：Windows / Linux Python 3.12 test matrix、compileall、Secret Scan、VS Code compile 与 VSIX artifact。
+- 新增 `.github/workflows/release.yml`：`v*` tag 触发 Windows 完整测试、版本一致性校验、VSIX / source ZIP / SHA256SUMS 构建并创建或更新 GitHub Release。
+- 新增根 `VERSION`，当前为 `0.1.0`；测试会校验其与 `vscode-companion/package.json` version 一致。
+- 新增 `CHANGELOG.md`。
+- 新增 `scripts/secret_scan.py`，扫描 tracked 与 untracked non-ignored 文件；支持 capability URL、GitHub token、OpenAI-style key、AWS access key、Bearer token 与常见 secret assignment 规则；输出只报告文件、行号和规则，不回显凭据值。
+- Secret Scan 会额外检查本机 `.runtime/access-token.txt` 中的真实 capability token 是否意外出现在待提交文件。
+- VS Code Companion 加入 `@vscode/vsce`、repository/license/homepage metadata、`vscode:prepublish`、`.vscodeignore`、独立 README/LICENSE。
+- 更新 `ARCHITECTURE.md`，使开源文档与当前真实架构一致。
+
+本地验证结果：
+
+- Python tests：47/47 通过。
+- Secret Scan：通过。
+- TypeScript compile：通过。
+- `vsce package`：成功生成有效 VSIX；包内仅保留 package metadata、README、LICENSE 与编译后的 extension.js。
+- Release metadata/version 一致性测试：通过。
+
+当前 GitHub Actions workflow 文件已经具备执行条件；正式推送到 GitHub 后，下一步应通过实际 PR / Actions run 再做一次云端验证。
+
+下一阶段进入 P2.2 / P3：VS Code LSP provider 状态语义细化，重点解决 `provider_state=ready + results=[]` 仍存在解释歧义的问题。

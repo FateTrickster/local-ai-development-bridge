@@ -1,5 +1,8 @@
 # Local AI Development Bridge
 
+[![CI](https://github.com/FateTrickster/local-ai-development-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/FateTrickster/local-ai-development-bridge/actions/workflows/ci.yml)
+
+
 一个独立于 MoonCode 授权/套餐体系的本地 MCP Bridge，用于让 ChatGPT 等 MCP 客户端在明确权限边界内访问本地项目。
 
 当前已完成 P0 核心底座：
@@ -220,6 +223,49 @@ Dashboard 只提供 GET 只读接口，固定绑定 `127.0.0.1`，与公网 MCP 
 
 用于客户端直接查询可观察性状态。
 
+## CI 与 Release
+
+项目使用 `VERSION` 作为根版本号，并要求与 `vscode-companion/package.json` 的 extension version 保持一致。
+
+CI 工作流：
+
+- Windows + Linux Python 单元测试；
+- Python `compileall`；
+- 内置 `scripts/secret_scan.py` 凭据扫描；
+- VS Code Companion `npm ci` / TypeScript compile；
+- CI VSIX artifact。
+
+本地可执行与 CI 相同的核心检查：
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe scripts\secret_scan.py
+npm --prefix vscode-companion run compile
+```
+
+创建与 `VERSION` 一致的 tag（例如 `v0.1.0`）后，Release workflow 会：
+
+1. 在 Windows runner 完整执行 Python tests；
+2. 校验 tag、根 `VERSION` 与 VS Code extension version 一致；
+3. 构建 VSIX；
+4. 用 `git archive` 生成源码 ZIP；
+5. 生成 `SHA256SUMS.txt`；
+6. 创建或更新 GitHub Release 并上传产物。
+
+VS Code Companion 也可以本地打包：
+
+```powershell
+npm --prefix vscode-companion run package
+```
+
+生成的 `.vsix` 可通过：
+
+```powershell
+code --install-extension <file>.vsix --force
+```
+
+详细版本变化见 `CHANGELOG.md`。
+
 ## VS Code Companion
 
 P1 Companion 已实现服务端桥接与 VS Code 扩展源码。Bridge 暴露 `vscode_health`、`get_diagnostics`、`lsp`、`read_editor_buffer` 四个 IDE 语义工具。
@@ -240,7 +286,7 @@ Companion 只监听 `127.0.0.1`，并使用本机持久 Token 保护 Bridge → 
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-当前路线见 `ROADMAP.md`，本轮完整优化审查见 `OPTIMIZATION_PLAN.md`。P1 一键启动与 Tunnel Manager 已完成真实公网 E2E 验证；下一重点是 GitHub CI / Release / VSIX 分发自动化。
+当前路线见 `ROADMAP.md`，本轮完整优化审查见 `OPTIMIZATION_PLAN.md`。P1 一键启动与 Tunnel Manager、P2 CI / Release / VSIX 分发链已完成本地验证；下一重点是 VS Code LSP provider 状态语义细化。
 
 ## License
 
