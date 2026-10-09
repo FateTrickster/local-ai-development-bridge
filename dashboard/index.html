@@ -226,7 +226,7 @@
     const items=[
       ['Workspace',s.workspace_root],['Write permission',s.allow_write?'Enabled':'Disabled'],['Command permission',s.allow_commands?'Enabled':'Disabled'],
       ['Bridge',`${s.bridge_host}:${s.bridge_port}`],['Dashboard',`127.0.0.1:${s.dashboard_port||'—'}`],['VS Code',v.provider_state||'unknown'],
-      ['VS Code reason',v.provider_state_reason||'—'],['Open documents',Array.isArray(v.open_documents)?v.open_documents.length:0],
+      ['VS Code reason',v.provider_state_reason||'—'],['Semantic contract',v.semantic_contract_version?`v${v.semantic_contract_version}`:'legacy'],['LSP timeout',v.lsp_query_timeout_ms?`${v.lsp_query_timeout_ms} ms`:'—'],['Open documents',Array.isArray(v.open_documents)?v.open_documents.length:0],
       ['Launcher status',l.status||'not_managed'],['Launcher phase',l.phase||'idle'],['Tunnel',t.public_origin||'—'],['Local smoke',localSmoke],['Public smoke',publicSmoke]
     ];
     const host=$('system-grid'); host.replaceChildren(); items.forEach(([k,val])=>{const row=document.createElement('div');row.className='row';const a=document.createElement('span');a.className='muted';a.textContent=k;const b=document.createElement('span');b.textContent=escText(val);row.append(a,b);host.append(row);});

@@ -103,6 +103,9 @@ class VSCodeServiceTests(unittest.TestCase):
             self.assertEqual(diagnostics["provider_state"], "ready")
             lsp = service.lsp("definition", "sample.py", 1, 1)
             self.assertEqual(lsp["operation"], "definition")
+            self.assertEqual(lsp["semantic_state"], "READY_EMPTY")
+            self.assertTrue(lsp["semantic_result_inconclusive"])
+            self.assertTrue(lsp["legacy_semantics"])
             buffer = service.read_editor_buffer("sample.py")
             self.assertTrue(buffer["document_dirty"])
 
@@ -115,6 +118,32 @@ class VSCodeServiceTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+    def test_v2_semantic_payload_is_preserved(self) -> None:
+        result = VSCodeService._normalize_lsp_result(
+            "hover",
+            {
+                "provider_state": "ready",
+                "provider_state_reason": "Provider query completed with results",
+                "semantic_state": "READY_WITH_RESULTS",
+                "semantic_result_inconclusive": False,
+                "operation": "hover",
+                "document_state": "DOCUMENT_OPEN",
+                "results": [{"contents": ["value"]}],
+                "truncated": False,
+            },
+        )
+        self.assertEqual(result["semantic_state"], "READY_WITH_RESULTS")
+        self.assertFalse(result["semantic_result_inconclusive"])
+        self.assertEqual(result["semantic_contract_version"], 2)
+        self.assertNotIn("legacy_semantics", result)
+
+    def test_semantic_reason_mapping(self) -> None:
+        self.assertEqual(VSCodeService._semantic_state_from_reason("LSP_PROVIDER_TIMEOUT: hover"), "TIMEOUT")
+        self.assertEqual(VSCodeService._semantic_state_from_reason("PATH_OUTSIDE_VSCODE_WORKSPACE"), "WORKSPACE_MISMATCH")
+        self.assertEqual(VSCodeService._semantic_state_from_reason("PROVIDER_NOT_AVAILABLE"), "PROVIDER_NOT_AVAILABLE")
+        self.assertEqual(VSCodeService._semantic_state_from_reason("PATH_REQUIRED"), "INVALID_REQUEST")
+        self.assertEqual(VSCodeService._semantic_state_from_reason("other failure"), "PROVIDER_ERROR")
 
     def test_workspace_mismatch_is_reported(self) -> None:
         _Handler.workspace_root = str(Path(self.temp.name) / "other")

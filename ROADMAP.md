@@ -97,17 +97,27 @@
 - tag / changelog / GitHub Release
 - VSIX + source ZIP + SHA256SUMS release 产物
 
-## P2.2：VS Code LSP 可靠性强化
+## P2.2：VS Code LSP 可靠性强化（已完成）
 
-明确区分：
+已建立 semantic contract v2，并把不同维度拆开表达：
 
-- READY_WITH_RESULTS
-- READY_EMPTY
-- PROVIDER_NOT_AVAILABLE
-- LANGUAGE_SERVER_LOADING
-- DOCUMENT_NOT_OPEN
-- WORKSPACE_MISMATCH
-- TIMEOUT
+`semantic_state`：
+
+- `READY_WITH_RESULTS`
+- `READY_EMPTY`
+- `PROVIDER_NOT_AVAILABLE`
+- `TIMEOUT`
+- `WORKSPACE_MISMATCH`
+- `INVALID_REQUEST`
+- `PROVIDER_ERROR`
+
+辅助状态：
+
+- `document_state=DOCUMENT_OPEN / DOCUMENT_NOT_OPEN`
+- `initial_semantic_state=LANGUAGE_SERVER_LOADING`
+- `warmup_retry_attempted`
+- `semantic_result_inconclusive`
+- legacy Companion 兼容规范化
 
 ## P2.3：稳定性与跨平台
 

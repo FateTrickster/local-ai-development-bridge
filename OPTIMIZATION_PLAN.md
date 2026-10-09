@@ -354,3 +354,27 @@ P2 已完成第一版持续集成与可分发构建链：
 当前 GitHub Actions workflow 文件已经具备执行条件；正式推送到 GitHub 后，下一步应通过实际 PR / Actions run 再做一次云端验证。
 
 下一阶段进入 P2.2 / P3：VS Code LSP provider 状态语义细化，重点解决 `provider_state=ready + results=[]` 仍存在解释歧义的问题。
+
+
+## 10. P3 VS Code LSP 语义状态实施结果（2026-10-09）
+
+P3 已针对“`provider_state=ready` 但 `results=[]` 到底意味着什么”的黑匣子问题完成 semantic contract v2：
+
+- 保留 `provider_state=ready/not_ready` 表示 Companion/请求层是否可用。
+- 新增 `semantic_state`：`READY_WITH_RESULTS`、`READY_EMPTY`、`PROVIDER_NOT_AVAILABLE`、`TIMEOUT`、`WORKSPACE_MISMATCH`、`INVALID_REQUEST`、`PROVIDER_ERROR`。
+- 新增 `document_state=DOCUMENT_OPEN/DOCUMENT_NOT_OPEN`，明确查询前文档是否已经打开。
+- 对未打开文档自动 `openTextDocument`，等待 350 ms 再重试一次 provider；如果第一次没有 provider response，则记录 `initial_semantic_state=LANGUAGE_SERVER_LOADING` 与 `warmup_retry_attempted=true`。
+- provider query 增加 3000 ms 上限，超时显式返回 `TIMEOUT`，不再无限等待。
+- 新 Companion 在 `/health` 公布 `semantic_contract_version=2`、timeout、warmup retry 与状态字典，Dashboard 可直接看到当前 contract。
+- Python `VSCodeService` 对新版 response 原样保留；对旧 Companion response 做兼容规范化。旧版非空结果映射 `READY_WITH_RESULTS`；旧版空结果映射 `READY_EMPTY` 但强制 `semantic_result_inconclusive=true`，避免把历史的 `undefined -> []` 行为误认为确定的空结果。
+- LSP Activity completion 现在同时记录 `semantic_state`、document state、language ID 和 warmup retry，Dashboard 时间线可直接看到。
+
+真机验证：
+
+- 新 Companion `/health` 已返回 semantic contract v2。
+- 对未打开的 TypeScript 文件执行 `document_symbols` 时，真实返回 `DOCUMENT_NOT_OPEN` → warmup retry → `PROVIDER_NOT_AVAILABLE`，同时保留 `initial_semantic_state=LANGUAGE_SERVER_LOADING`，证明原先的“空数组黑匣子”已被拆开。
+- `workspace_symbols` 在 provider command 成功返回空列表时真实返回 `READY_EMPTY` 且 `semantic_result_inconclusive=false`。
+- TypeScript compile 通过。
+- Python VSCodeService 专项测试通过。
+
+下一阶段进入稳定性优化：优先处理 pywinpty socket `ResourceWarning`、Activity/progress/audit 日志轮转，以及 Linux/macOS PTY 支持边界。
