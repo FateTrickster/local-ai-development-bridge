@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .jsonl_utils import JsonlRotationPolicy, rotate_before_append, rotated_paths
+
 
 _PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 _RUNTIME_DIR = _PACKAGE_ROOT / ".runtime"
@@ -66,30 +68,48 @@ def redact_value(value: Any) -> Any:
 
 
 class ActivityService:
-    def __init__(self, path: Path = _ACTIVITY_FILE):
+    def __init__(
+        self,
+        path: Path = _ACTIVITY_FILE,
+        rotation: JsonlRotationPolicy | None = None,
+    ):
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.rotation = rotation or JsonlRotationPolicy.from_env()
         self._lock = threading.RLock()
         self._seq = self._load_last_seq()
         self._started: dict[str, float] = {}
 
+    def _segments(self) -> list[Path]:
+        return rotated_paths(self.path, self.rotation)
+
+    def _earliest_retained_seq(self) -> int | None:
+        for segment in self._segments():
+            try:
+                with segment.open("r", encoding="utf-8", errors="replace") as handle:
+                    for line in handle:
+                        try:
+                            item = json.loads(line)
+                            return int(item.get("seq", 0))
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            continue
+            except OSError:
+                continue
+        return None
+
     def _load_last_seq(self) -> int:
-        if not self.path.is_file():
-            return 0
         last_seq = 0
-        try:
-            with self.path.open("r", encoding="utf-8", errors="replace") as handle:
-                for line in handle:
-                    try:
-                        record = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    try:
-                        last_seq = max(last_seq, int(record.get("seq", 0)))
-                    except (TypeError, ValueError):
-                        continue
-        except OSError:
-            return 0
+        for segment in self._segments():
+            try:
+                with segment.open("r", encoding="utf-8", errors="replace") as handle:
+                    for line in handle:
+                        try:
+                            record = json.loads(line)
+                            last_seq = max(last_seq, int(record.get("seq", 0)))
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            continue
+            except OSError:
+                continue
         return last_seq
 
     def emit(
@@ -122,8 +142,10 @@ class ActivityService:
                 record["details"] = redact_value(details)
             if duration_ms is not None:
                 record["duration_ms"] = max(0, int(duration_ms))
+            line = json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
+            rotate_before_append(self.path, len(line.encode("utf-8")), self.rotation)
             with self.path.open("a", encoding="utf-8", newline="\n") as handle:
-                handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+                handle.write(line)
             return record
 
     def start(
@@ -178,38 +200,63 @@ class ActivityService:
         after = max(0, int(after_seq or 0))
         events: list[dict[str, Any]] = []
         truncated = False
-        if not self.path.is_file():
-            return {"events": [], "next_seq": after, "truncated": False}
+        segments = self._segments()
+        if not segments:
+            return {
+                "events": [],
+                "next_seq": after,
+                "truncated": False,
+                "earliest_seq": None,
+                "history_lost": False,
+            }
+        earliest_seq = self._earliest_retained_seq()
+        history_lost = bool(after > 0 and earliest_seq is not None and earliest_seq > after + 1)
         try:
             if after > 0:
-                with self.path.open("r", encoding="utf-8", errors="replace") as handle:
-                    for line in handle:
-                        try:
-                            item = json.loads(line)
-                            seq = int(item.get("seq", 0))
-                        except (json.JSONDecodeError, TypeError, ValueError):
-                            continue
-                        if seq <= after:
-                            continue
-                        if len(events) >= limit:
-                            truncated = True
-                            break
-                        events.append(item)
+                for segment in segments:
+                    with segment.open("r", encoding="utf-8", errors="replace") as handle:
+                        for line in handle:
+                            try:
+                                item = json.loads(line)
+                                seq = int(item.get("seq", 0))
+                            except (json.JSONDecodeError, TypeError, ValueError):
+                                continue
+                            if seq <= after:
+                                continue
+                            if len(events) >= limit:
+                                truncated = True
+                                break
+                            events.append(item)
+                    if truncated:
+                        break
             else:
                 tail: deque[dict[str, Any]] = deque(maxlen=limit)
                 total_valid = 0
-                with self.path.open("r", encoding="utf-8", errors="replace") as handle:
-                    for line in handle:
-                        try:
-                            item = json.loads(line)
-                            int(item.get("seq", 0))
-                        except (json.JSONDecodeError, TypeError, ValueError):
-                            continue
-                        total_valid += 1
-                        tail.append(item)
+                for segment in segments:
+                    with segment.open("r", encoding="utf-8", errors="replace") as handle:
+                        for line in handle:
+                            try:
+                                item = json.loads(line)
+                                int(item.get("seq", 0))
+                            except (json.JSONDecodeError, TypeError, ValueError):
+                                continue
+                            total_valid += 1
+                            tail.append(item)
                 events = list(tail)
                 truncated = total_valid > len(events)
         except OSError:
-            return {"events": [], "next_seq": after, "truncated": False}
+            return {
+                "events": [],
+                "next_seq": after,
+                "truncated": False,
+                "earliest_seq": earliest_seq,
+                "history_lost": history_lost,
+            }
         next_seq = int(events[-1].get("seq", after)) if events else after
-        return {"events": events, "next_seq": next_seq, "truncated": truncated}
+        return {
+            "events": events,
+            "next_seq": next_seq,
+            "truncated": truncated,
+            "earliest_seq": earliest_seq,
+            "history_lost": history_lost,
+        }

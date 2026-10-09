@@ -494,4 +494,12 @@ if __name__ == "__main__":
     try:
         uvicorn.run(app, host=host, port=port, log_level="info")
     finally:
+        terminal_state = terminal.shutdown(timeout=3.0)
+        activity.emit(
+            "system_state",
+            status="stopped",
+            title="Terminal service stopped",
+            component="terminal",
+            details=terminal_state,
+        )
         dashboard.stop()

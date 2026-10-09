@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 from .activity_service import ActivityService
 from .config import Settings
 from .launcher_state import LauncherStateStore
+from .jsonl_utils import JsonlRotationPolicy
 from .task_service import TaskService
 from .terminal_service import TerminalService
 from .vscode_service import VSCodeService
@@ -53,6 +54,7 @@ class DashboardService:
         commands = self.terminal.list_commands(limit=20, tail_bytes=4096)
         vscode = self.vscode.health()
         launcher = self.launcher_state.read()
+        rotation = JsonlRotationPolicy.from_env()
         todos = task_state.get("todos", []) if isinstance(task_state.get("todos"), list) else []
         counts = {
             "pending": sum(1 for item in todos if isinstance(item, dict) and item.get("status") == "pending"),
@@ -68,6 +70,8 @@ class DashboardService:
                 "bridge_port": self.settings.bridge_port,
                 "dashboard_host": "127.0.0.1",
                 "dashboard_port": self.port,
+                "log_rotation_max_bytes": rotation.max_bytes,
+                "log_rotation_backups": rotation.backup_count,
             },
             "task": task_state,
             "todo_counts": counts,

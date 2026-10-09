@@ -23,7 +23,7 @@
 
 ## 安装
 
-当前版本主要在 Windows + Python 3.12 环境下开发和验证。
+当前版本使用 Python 3.12 开发。核心 Bridge/PTY 已支持 Windows、Linux 与 macOS；Windows 使用 pywinpty，Linux/macOS 使用 Python 标准库 PTY 适配器。Windows 用户可使用 `.cmd` 一键脚本，其他平台可直接运行 `python launcher.py start`。
 
 ```powershell
 git clone https://github.com/FateTrickster/local-ai-development-bridge.git
@@ -158,6 +158,8 @@ $env:BRIDGE_ALLOWED_ORIGINS = "https://xxxx.trycloudflare.com"
 | `BRIDGE_TOKEN` | 空 | 覆盖持久 capability Token（默认从 `.runtime/access-token.txt` 读取或生成） |
 | `BRIDGE_ALLOWED_HOSTS` | 空 | 追加到 DNS rebinding 保护的 Host 白名单 |
 | `BRIDGE_ALLOWED_ORIGINS` | 空 | 追加到 DNS rebinding 保护的 Origin 白名单 |
+| `BRIDGE_LOG_MAX_BYTES` | `5242880` | Activity / Progress / Audit 单个 JSONL 分段最大字节数（默认 5 MiB） |
+| `BRIDGE_LOG_BACKUPS` | `3` | 每类 JSONL 最多保留的轮转备份数量（0–10） |
 | `BRIDGE_DASHBOARD_ENABLED` | `1` | 是否启动只读本地可观察性 Dashboard |
 | `BRIDGE_DASHBOARD_PORT` | `8766` | Dashboard 首选 localhost 端口；占用时自动尝试后续端口 |
 
@@ -193,6 +195,7 @@ version: sha256:...
 - `.runtime/activity.jsonl`：结构化工具、终端、文件和系统状态事件，写入前会执行敏感信息脱敏；
 - `.runtime/launcher-state.json`：一键启动器的阶段、Tunnel、进程和 smoke 状态；不会保存 capability token；
 - `.audit/requests.jsonl`：HTTP 安全审计日志，已被 `.gitignore` 排除；
+- Activity / Progress / Audit JSONL 默认按 5 MiB、3 个备份自动轮转，备份名为 `.1`、`.2`、`.3`；查询接口会跨保留分段读取，并用 `history_lost` 显式提示调用方请求的 seq 已早于当前保留窗口；
 - PTY 单命令输出缓冲默认最多 4 MiB，并使用绝对 UTF-8 字节 offset 增量读取。
 
 ## 可观察性 Dashboard
@@ -222,6 +225,13 @@ Dashboard 只提供 GET 只读接口，固定绑定 `127.0.0.1`，与公网 MCP 
 - `dashboard_info`
 
 用于客户端直接查询可观察性状态。
+
+## PTY 与进程回收
+
+- Windows：使用 `pywinpty`。针对 pywinpty 2.0.x 在 `wait()` 后将 `closed=True`、导致后续 `close()` 跳过 socket 关闭的问题，Bridge 会无条件关闭其内部 `fileobj` / `_server` socket，并等待内部 reader thread 退出。
+- Linux/macOS：使用 `bridge/unix_pty.py` 的标准库 PTY 适配器，支持前台/后台命令、增量输出、stdin、wait、terminate/kill。
+- `TerminalService.shutdown()` 会在 Bridge 停止时终止仍在运行的命令并等待 reader thread 清理。
+- CI Python matrix 覆盖 Windows、Ubuntu 与 macOS，终端集成测试不再只在 Windows 执行。
 
 ## CI 与 Release
 
@@ -299,7 +309,7 @@ LSP 查询使用 semantic contract v2，不再把所有空数组都视为同一�
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-当前路线见 `ROADMAP.md`，本轮完整优化审查见 `OPTIMIZATION_PLAN.md`。P1 一键启动、P2 CI/Release 与 P3 LSP semantic contract 已完成；下一重点是 PTY 资源释放、Activity 日志轮转与跨平台稳定性。
+当前路线见 `ROADMAP.md`，本轮完整优化审查见 `OPTIMIZATION_PLAN.md`。P1 一键启动、P2 CI/Release、P3 LSP semantic contract 与 P4 第一阶段稳定性（PTY 资源释放、日志轮转、Linux/macOS PTY）已实现；下一重点是多工作区与权限确认 UI。
 
 ## License
 

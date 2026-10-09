@@ -17,8 +17,10 @@ from .pathguard import WorkspaceGuard
 
 if platform.system() == "Windows":
     from winpty import PtyProcess
+    UnixPtyProcess = None  # type: ignore[assignment]
 else:
     PtyProcess = None  # type: ignore[assignment]
+    from .unix_pty import UnixPtyProcess
 
 
 _MAX_BUFFER_BYTES = 4 * 1024 * 1024
@@ -38,6 +40,7 @@ class CommandRecord:
     process: Any
     started_at: float
     finished_at: float | None = None
+    reader_thread: threading.Thread | None = None
     buffer: bytearray = field(default_factory=bytearray)
     earliest_offset: int = 0
     total_offset: int = 0
@@ -121,6 +124,40 @@ class TerminalService:
                 duration_ms=elapsed_ms,
             )
 
+    @staticmethod
+    def _close_process(process: Any) -> None:
+        """Close a PTY and wait briefly for pywinpty's internal socket reader.
+
+        pywinpty uses a private localhost socket pair and a daemon reader thread.
+        `PtyProcess.close()` closes the server/accepted socket, but without joining
+        that internal thread the client socket can survive until GC and emit
+        ResourceWarning. Joining it after close gives the thread time to execute
+        its own `client.close()` before the process object is released.
+        """
+        # pywinpty 2.0.x sets `PtyProcess.closed=True` inside `isalive()` as soon
+        # as the child exits. `wait()` calls `isalive()`, so a subsequent
+        # `PtyProcess.close()` can become a no-op and leave its localhost socket
+        # pair open. Close both Python socket objects unconditionally before
+        # delegating to the library close method. Socket.close() is idempotent.
+        for attribute in ("fileobj", "_server"):
+            socket_object = getattr(process, attribute, None)
+            if socket_object is not None:
+                try:
+                    socket_object.close()
+                except Exception:
+                    pass
+        try:
+            process.close()
+        except Exception:
+            pass
+        internal_thread = getattr(process, "_thread", None)
+        if (
+            isinstance(internal_thread, threading.Thread)
+            and internal_thread is not threading.current_thread()
+            and internal_thread.is_alive()
+        ):
+            internal_thread.join(timeout=1.5)
+
     def _reader(self, record: CommandRecord) -> None:
         process = record.process
         try:
@@ -149,10 +186,7 @@ class TerminalService:
                     exit_code = process.exitstatus
                 except Exception:
                     exit_code = None
-            try:
-                process.close()
-            except Exception:
-                pass
+            self._close_process(process)
             record.process = None
             self._finalize(record, exit_code)
 
@@ -162,7 +196,14 @@ class TerminalService:
             if PtyProcess is None:
                 raise RuntimeError("PTY_BACKEND_UNAVAILABLE")
             return PtyProcess.spawn(argv, cwd=str(workdir), env=os.environ.copy(), dimensions=(30, 120))
-        raise RuntimeError("PTY_BACKEND_NOT_IMPLEMENTED_ON_THIS_PLATFORM")
+        if UnixPtyProcess is None:
+            raise RuntimeError("PTY_BACKEND_UNAVAILABLE")
+        return UnixPtyProcess.spawn(
+            argv,
+            cwd=str(workdir),
+            env=os.environ.copy(),
+            dimensions=(30, 120),
+        )
 
     def _record(self, command_id: str) -> CommandRecord:
         with self._registry_lock:
@@ -220,7 +261,14 @@ class TerminalService:
                     "background": bool(background),
                 },
             )
-        threading.Thread(target=self._reader, args=(record,), daemon=True, name=f"terminal-{command_id[:8]}").start()
+        reader_thread = threading.Thread(
+            target=self._reader,
+            args=(record,),
+            daemon=True,
+            name=f"terminal-{command_id[:8]}",
+        )
+        record.reader_thread = reader_thread
+        reader_thread.start()
         self._prune()
 
         if not background:
@@ -311,6 +359,37 @@ class TerminalService:
                 "next_offset": record.total_offset,
                 "input_seq": record.input_seq,
             }
+
+    def shutdown(self, timeout: float = 3.0) -> dict[str, Any]:
+        """Terminate running commands and wait for PTY reader cleanup."""
+        timeout = max(0.1, min(float(timeout), 15.0))
+        with self._registry_lock:
+            records = list(self._commands.values())
+        running = 0
+        for record in records:
+            with record.condition:
+                process = record.process
+                if record.status == "running" and process is not None:
+                    running += 1
+                    try:
+                        terminated = process.terminate(force=False)
+                        if terminated is False:
+                            process.kill()
+                    except Exception:
+                        try:
+                            process.kill()
+                        except Exception:
+                            pass
+                    record.condition.notify_all()
+        deadline = time.monotonic() + timeout
+        for record in records:
+            thread = record.reader_thread
+            if thread is None or thread is threading.current_thread():
+                continue
+            remaining = max(0.0, deadline - time.monotonic())
+            thread.join(timeout=remaining)
+        lingering = sum(1 for record in records if record.reader_thread is not None and record.reader_thread.is_alive())
+        return {"tracked": len(records), "running_terminated": running, "lingering_reader_threads": lingering}
 
     def terminate(self, command_id: str, force: bool = False) -> dict[str, Any]:
         self._require_commands()

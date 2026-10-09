@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from .jsonl_utils import JsonlRotationPolicy, rotate_before_append
+
 
 _PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 _RUNTIME_DIR = _PACKAGE_ROOT / ".runtime"
@@ -37,8 +39,13 @@ def get_or_create_token() -> str:
 
 
 class AuditLogger:
-    def __init__(self, path: Path = _AUDIT_FILE):
+    def __init__(
+        self,
+        path: Path = _AUDIT_FILE,
+        rotation: JsonlRotationPolicy | None = None,
+    ):
         self.path = path
+        self.rotation = rotation or JsonlRotationPolicy.from_env()
         self._lock = threading.Lock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -46,6 +53,7 @@ class AuditLogger:
         record = {"timestamp": _now_iso(), "event": event, **details}
         line = json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
         with self._lock:
+            rotate_before_append(self.path, len(line.encode("utf-8")), self.rotation)
             with self.path.open("a", encoding="utf-8", newline="\n") as handle:
                 handle.write(line)
 
