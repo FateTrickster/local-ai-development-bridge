@@ -255,6 +255,28 @@ version: sha256:...
 
 ## 可观察性 Dashboard
 
+### 默认聚焦视图
+
+默认 `http://127.0.0.1:8766/` 现在只显示四类信息：
+
+- AI 近 1 min / 5 min 输出 token 数与 TPS；
+- 大目标 / 分目标 / 小目标阶段用时；
+- 任务树与当前最细 active leaf（绿色）；
+- 新增 / 修改 / 删除文件及完整绝对地址。
+
+任务层级通过 todo 的可选 `parent_id` 持久化；活动分支可以是同一祖先链上的多个 `in_progress` 项。阶段开始/完成时间由 `TaskService` 保存，因此页面刷新或换对话后仍可继续计算。
+
+AI token streaming **不能从普通 MCP tool traffic 自动得到**。Bridge 因此不会用字符数或 Prompt 估算伪造 TPS；当客户端没有提供自动遥测时显示“未接入”。兼容本地客户端可以通过 localhost-only `/api/telemetry/ai-output` 程序接口提交 exact `output_tokens` + `duration_ms`，数据落到 `.runtime/ai-output.jsonl`。
+
+此前完整的 Activity / Terminal / Workspace / Approval / Launcher / VS Code 控制台仍保留在：
+
+```text
+http://127.0.0.1:8766/advanced.html
+```
+
+默认页面不再展示这些高级信息。
+
+
 Bridge 启动时默认同时启动 localhost-only Dashboard：
 
 ```text

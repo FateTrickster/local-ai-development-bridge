@@ -62,6 +62,56 @@ class TaskServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "INVALID_PROGRESS_RANGE"):
             self.service.report_progress("x", current=3, total=2)
 
+    def test_hierarchical_active_chain_and_stage_timing(self) -> None:
+        state = self.service.set_todos(
+            [
+                {"id": "root", "content": "total", "status": "in_progress"},
+                {"id": "sub", "content": "sub", "status": "in_progress", "parent_id": "root"},
+                {"id": "leaf", "content": "leaf", "status": "in_progress", "parent_id": "sub"},
+                {"id": "later", "content": "later", "status": "pending", "parent_id": "root"},
+            ]
+        )
+        self.assertEqual(state["active_leaf_id"], "leaf")
+        self.assertEqual(state["active_path"], ["root", "sub", "leaf"])
+        by_id = {item["id"]: item for item in state["todos"]}
+        self.assertEqual(by_id["root"]["level"], 0)
+        self.assertEqual(by_id["sub"]["level"], 1)
+        self.assertEqual(by_id["leaf"]["level"], 2)
+        self.assertIsNotNone(by_id["root"]["started_at"])
+        self.assertIsNotNone(by_id["leaf"]["elapsed_ms"])
+        event = self.service.report_progress("nested progress")
+        self.assertEqual(event["todo_id"], "leaf")
+
+    def test_in_progress_siblings_are_still_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "MULTIPLE_IN_PROGRESS_TODOS"):
+            self.service.set_todos(
+                [
+                    {"id": "root", "content": "total", "status": "in_progress"},
+                    {"id": "a", "content": "a", "status": "in_progress", "parent_id": "root"},
+                    {"id": "b", "content": "b", "status": "in_progress", "parent_id": "root"},
+                ]
+            )
+
+    def test_parent_validation_and_cycle_detection(self) -> None:
+        with self.assertRaisesRegex(ValueError, "UNKNOWN_PARENT_ID"):
+            self.service.set_todos([{"id": "a", "content": "a", "status": "pending", "parent_id": "missing"}])
+        with self.assertRaisesRegex(ValueError, "TODO_PARENT_CYCLE"):
+            self.service.set_todos(
+                [
+                    {"id": "a", "content": "a", "status": "pending", "parent_id": "b"},
+                    {"id": "b", "content": "b", "status": "pending", "parent_id": "a"},
+                ]
+            )
+
+    def test_timestamps_survive_replacement_and_completion(self) -> None:
+        first = self.service.set_todos([{"id": "a", "content": "first", "status": "in_progress"}])
+        started = first["todos"][0]["started_at"]
+        completed = self.service.set_todos([{"id": "a", "content": "first", "status": "completed"}])
+        item = completed["todos"][0]
+        self.assertEqual(item["started_at"], started)
+        self.assertIsNotNone(item["completed_at"])
+        self.assertIsNotNone(item["elapsed_ms"])
+
 
 if __name__ == "__main__":
     unittest.main()

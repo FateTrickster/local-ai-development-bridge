@@ -312,6 +312,8 @@ def write_file(
     context = registry.get(workspace_id)
     _require_workspace_permission(context, "write")
     content_bytes = content.encode("utf-8")
+    target_path = context.guard.resolve(path)
+    file_action = "modify" if target_path.exists() else "add"
     gate = _approval_gate(
         settings.confirm_writes,
         approval_id,
@@ -341,7 +343,13 @@ def write_file(
         status="completed",
         title=f"File written: {result.get('path', path)}",
         component="files",
-        details={"workspace_id": context.workspace_id, "path": result.get("path", path), "bytes": result.get("bytes")},
+        details={
+            "workspace_id": context.workspace_id,
+            "path": result.get("path", path),
+            "absolute_path": str(target_path),
+            "action": file_action,
+            "bytes": result.get("bytes"),
+        },
     )
     return result
 
@@ -393,7 +401,14 @@ def apply_patch(
         component="files",
         details={
             "workspace_id": context.workspace_id,
-            "files": [{"path": item.get("path"), "action": item.get("action")} for item in result.get("files", [])],
+            "files": [
+                {
+                    "path": item.get("path"),
+                    "absolute_path": str(context.guard.resolve(str(item.get("path")))) if item.get("path") else None,
+                    "action": item.get("action"),
+                }
+                for item in result.get("files", [])
+            ],
         },
     )
     return result
@@ -488,7 +503,13 @@ def terminate_command(command_id: str, force: bool = False) -> dict[str, Any]:
 
 @mcp.tool()
 def set_todos(todos: list[dict[str, Any]]) -> dict[str, Any]:
-    """Replace the durable task snapshot; at most one todo may be in_progress."""
+    """Replace the durable hierarchical task plan.
+
+    Each todo accepts id/content/status plus optional parent_id. Multiple
+    in_progress items are allowed only when they form one ancestor chain
+    (total task -> subtask -> current leaf), which lets the dashboard time
+    each stage and highlight the deepest active branch.
+    """
     result = _observed(
         "set_todos",
         "Update task plan",
@@ -497,7 +518,7 @@ def set_todos(todos: list[dict[str, Any]]) -> dict[str, Any]:
         summarize=lambda value: {
             "version": value.get("version"),
             "todo_count": len(value.get("todos", [])),
-            "active": next((item.get("id") for item in value.get("todos", []) if item.get("status") == "in_progress"), None),
+            "active": value.get("active_leaf_id"),
         },
     )
     activity.emit(

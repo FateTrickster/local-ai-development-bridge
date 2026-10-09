@@ -6,6 +6,11 @@ All notable changes to this project will be documented here.
 
 ### Added
 
+- Focused default Dashboard with AI output 1-minute/5-minute windows and TPS telemetry, hierarchical stage timing, task-tree highlighting, and file-change paths.
+- Preserved the previous full observability/control UI as `dashboard/advanced.html`.
+- Hierarchical TaskService state with `parent_id`, active-path timing, persistent start/completion timestamps, and deepest-active-leaf selection.
+- Exact client-fed AI output telemetry; the Bridge explicitly reports unavailable when the MCP client does not expose assistant token streaming instead of fabricating TPS.
+- Git worktree projection so terminal-driven file changes remain visible even without explicit FileService events.
 - Per-workspace permission policies (`inherit`, `readonly`, `write`, `command`, `full`) with global write/command permissions as a hard ceiling and Launcher `--workspace-policy ID=MODE`.
 - Explicit multi-workspace registry with backward-compatible `default` workspace, workspace-scoped file/patch/PTY/VS Code operations, Dashboard aggregation, and Launcher `--extra-workspace ID=PATH`.
 - Optional localhost-only human approval gate for file writes, patches and terminal commands, with one-time fingerprint-bound approvals, TTL and CSRF-resistant Dashboard decisions.
@@ -20,8 +25,8 @@ All notable changes to this project will be documented here.
 
 ### Planned
 
-- process-tree and CPU/memory observability
-- richer Dashboard filtering and search
+- Optional automatic client adapters for exact AI token-stream telemetry where the host client exposes usage data.
+- Additional process-tree / CPU / memory observability only if it proves useful without cluttering the focused default Dashboard.
 
 ## [0.1.0] - 2026-10-09
 
