@@ -378,3 +378,47 @@ P3 已针对“`provider_state=ready` 但 `results=[]` 到底意味着什么”�
 - Python VSCodeService 专项测试通过。
 
 下一阶段进入稳定性优化：优先处理 pywinpty socket `ResourceWarning`、Activity/progress/audit 日志轮转，以及 Linux/macOS PTY 支持边界。
+
+
+## 11. P4 稳定性与跨平台第一阶段实施结果（2026-10-09）
+
+本阶段处理了三个长期工程问题：PTY 资源释放、运行日志无限增长和非 Windows 终端缺失。
+
+### 11.1 pywinpty socket ResourceWarning 根因与修复
+
+通过直接检查 pywinpty 2.0.x `PtyProcess` 实现确认根因：`wait()` 循环调用 `isalive()`；child 退出时 `isalive()` 会把 `self.closed=True`。随后 `PtyProcess.close()` 因 `if not self.closed` 条件不成立而直接跳过，因此 `_server` 与 `fileobj` 两个 localhost socket 没有关闭，直到 GC 才产生 `ResourceWarning`。
+
+Bridge 现在在 PTY finalize 时：
+
+1. 不依赖 pywinpty 的 `closed` 标志；
+2. 无条件、幂等关闭 `fileobj` 和 `_server`；
+3. 再调用库自身 `close()`；
+4. 等待 pywinpty 内部 socket reader thread 退出；
+5. `TerminalService.shutdown()` 统一终止剩余命令并等待 Bridge 自己的 reader threads。
+
+Windows 专项终端测试开启 `ResourceWarning` 后，5/5 通过且不再输出 socket warning。
+
+### 11.2 JSONL 有界轮转
+
+新增 `bridge/jsonl_utils.py`，统一为以下日志执行轮转：
+
+- `.runtime/activity.jsonl`；
+- `.runtime/progress.jsonl`；
+- `.audit/requests.jsonl`。
+
+默认 active segment 上限 5 MiB、保留 3 个备份，可通过 `BRIDGE_LOG_MAX_BYTES` 与 `BRIDGE_LOG_BACKUPS` 调整。Activity/Progress 查询会跨当前保留的 rotated segments 读取；seq 在重启后仍从保留分段最大值继续。若调用方的 `after_seq` 已早于保留窗口，返回 `history_lost=true` 与 `earliest_seq`，避免日志轮转再次形成静默数据缺口。Dashboard 系统状态显示当前轮转策略。
+
+### 11.3 Linux/macOS PTY
+
+新增 `bridge/unix_pty.py`，使用标准库 `pty.openpty`、`subprocess.Popen`、`select` 和 process group signal 实现与 Windows pywinpty 对齐的接口：read/write/isalive/wait/terminate/kill/close。TerminalService 现在按平台选择后端，现有终端集成测试改为 Windows/Linux/macOS 共用。GitHub CI matrix 增加 `macos-latest`，Ubuntu/macOS 将真实执行终端测试而不再 skip。
+
+本地 Windows 验证：
+
+- Python tests：54/54 通过；
+- `ResourceWarning` 显式开启：无 socket warning；
+- log rotation 专项测试：通过；
+- Secret Scan：通过。
+
+Linux/macOS 后端最终以 GitHub Actions 云端 matrix 结果作为验收依据。
+
+下一阶段：多工作区模型与权限确认 UI。

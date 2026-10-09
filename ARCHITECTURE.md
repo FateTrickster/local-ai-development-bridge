@@ -56,7 +56,7 @@ Dashboard 固定绑定 `127.0.0.1`，不会通过 MCP Quick Tunnel 暴露。
 
 ### TerminalService
 
-Windows 使用 `pywinpty` 提供持久 PTY：后台命令、增量输出、stdin、wait、terminate、有界缓冲和只读命令快照。非 Windows PTY 仍属于后续工作。
+Windows 使用 `pywinpty` 提供持久 PTY；Linux/macOS 使用标准库 `pty` + `subprocess` 适配器。统一提供后台命令、增量输出、stdin、wait、terminate、kill、有界缓冲和只读命令快照。Windows 端额外处理 pywinpty 的 socket 生命周期缺陷，Bridge 停止时统一执行 TerminalService shutdown。
 
 ### TaskService
 
@@ -94,7 +94,7 @@ LSP 层使用 semantic contract v2：传输层 `provider_state` 与语义查询�
 .audit/requests.jsonl          HTTP security audit
 ```
 
-以上目录均被 `.gitignore` 排除。
+以上目录均被 `.gitignore` 排除。Activity / Progress / Audit JSONL 使用统一轮转策略，默认每个 active segment 5 MiB、保留 3 个备份；读取接口跨保留分段聚合，并暴露 `earliest_seq/history_lost`。
 
 ## 5. 启动路径
 

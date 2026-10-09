@@ -6,8 +6,14 @@ All notable changes to this project will be documented here.
 
 ### Added
 
+- Cross-platform persistent PTY backend for Linux/macOS using the Python standard library, with the same command lifecycle exposed on Windows.
+- Bounded rotation for Activity, Progress and Audit JSONL logs with retained-history gap metadata.
 - VS Code Companion semantic contract v2 for LSP queries, including explicit ready/empty/provider-unavailable/timeout/workspace states, document-open metadata and warmup retry visibility.
 - Python-side normalization for legacy Companion LSP responses.
+
+### Fixed
+
+- pywinpty 2.0.x socket resources are explicitly closed after child exit, eliminating the repeated `ResourceWarning: unclosed socket` observed in terminal tests.
 
 ### Planned
 

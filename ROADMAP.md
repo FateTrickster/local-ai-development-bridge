@@ -72,7 +72,7 @@
 后续增强：
 
 - 文件修改增删行统计与可展开 diff
-- Activity log 轮转
+- Activity log 轮转（已完成，并同步覆盖 Progress/Audit）
 - 更丰富的运行耗时/失败统计
 - VS Code 内嵌 Status Bar / Tree View 或 Webview
 
@@ -119,13 +119,22 @@
 - `semantic_result_inconclusive`
 - legacy Companion 兼容规范化
 
-## P2.3：稳定性与跨平台
+## P2.3：稳定性与跨平台（第一阶段已完成）
 
-- 处理 pywinpty `ResourceWarning: unclosed socket`
-- 日志轮转
-- 多工作区
-- 权限确认 UI
-- Linux/macOS PTY 实现或明确 Windows-first 支持策略
+已完成：
+
+- 修复 pywinpty 2.0.x `wait() -> closed=True -> close() no-op` 导致的 socket `ResourceWarning`；
+- `TerminalService.shutdown()` 与 reader-thread 回收；
+- Activity / Progress / Audit JSONL 有界轮转；
+- 轮转后 seq 连续性与 `history_lost` 可见性；
+- Linux/macOS 标准库 PTY 后端；
+- CI Python matrix 扩展为 Windows / Ubuntu / macOS。
+
+后续：
+
+- 多工作区；
+- 权限确认 UI；
+- 更细的进程树/资源使用统计。
 
 ## E2E
 
