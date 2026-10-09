@@ -16,6 +16,19 @@
 - HTTP 请求审计日志，不记录能力 Token；
 - 只读、写入、命令执行可独立控制。
 
+## 安装
+
+当前版本主要在 Windows + Python 3.12 环境下开发和验证。
+
+```powershell
+git clone https://github.com/FateTrickster/local-ai-development-bridge.git
+cd local-ai-development-bridge
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+如需通过 Cloudflare Quick Tunnel 从公网连接，还需要提前安装 `cloudflared`。不使用公网 Tunnel 时，可直接在本机 MCP 客户端中使用 `127.0.0.1` 地址。
+
 ## 启动
 
 只读模式：
@@ -136,6 +149,7 @@ P1 Companion 已实现服务端桥接与 VS Code 扩展源码。Bridge 暴露 `v
 
 ```bat
 cd vscode-companion
+npm install
 npm run compile
 ```
 
@@ -147,4 +161,8 @@ Companion 只监听 `127.0.0.1`，并使用本机持久 Token 保护 Bridge → 
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-当前路线见 `ROADMAP.md`。P0、任务状态和 VS Code Companion 代码已落地；下一步是完成 Companion 真机运行验收，并进入启动/状态管理、稳定公网入口等 P2 产品化工作。
+当前路线见 `ROADMAP.md`。P0、任务状态和 VS Code Companion 已完成真机通信验证；下一步是启动/状态管理、稳定公网入口、多工作区和日志轮转等 P2 产品化工作。
+
+## License
+
+本项目使用 MIT License，详见 `LICENSE`。
