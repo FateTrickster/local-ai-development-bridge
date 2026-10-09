@@ -14,6 +14,7 @@ _PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 _RUNTIME_DIR = _PACKAGE_ROOT / ".runtime"
 _TODO_FILE = _RUNTIME_DIR / "todos.json"
 _PROGRESS_FILE = _RUNTIME_DIR / "progress.jsonl"
+_TASK_SCHEMA_VERSION = 2
 
 
 def _now_iso() -> str:
@@ -145,12 +146,24 @@ class TaskService:
                         progress_count += sum(1 for line in handle if line.strip())
                 except OSError:
                     continue
+            legacy_timing_ids = [
+                str(item.get("id"))
+                for item in enriched
+                if item.get("status") in {"in_progress", "completed"} and not item.get("started_at")
+                or item.get("status") == "completed" and not item.get("completed_at")
+            ]
+            schema_version = int(snapshot.get("schema_version", 1 if raw_todos else _TASK_SCHEMA_VERSION))
+            timing_state = "legacy_missing_timestamps" if legacy_timing_ids else "ok"
             return {
                 **snapshot,
+                "schema_version": schema_version,
                 "todos": enriched,
                 "active_leaf_id": active_leaf.get("id") if active_leaf else None,
                 "active_path": active_path,
                 "progress_events": progress_count,
+                "timing_state": timing_state,
+                "timing_available": not legacy_timing_ids,
+                "legacy_timing_ids": legacy_timing_ids,
             }
 
     def get_progress_events(self, limit: int = 100, after_seq: int | None = None) -> dict[str, Any]:
@@ -316,6 +329,7 @@ class TaskService:
                         item["started_at"] = now
 
             snapshot = {
+                "schema_version": _TASK_SCHEMA_VERSION,
                 "version": int(previous.get("version", 0)) + 1,
                 "todos": normalized,
                 "updated_at": now,

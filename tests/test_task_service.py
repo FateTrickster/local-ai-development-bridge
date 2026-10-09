@@ -112,6 +112,32 @@ class TaskServiceTests(unittest.TestCase):
         self.assertIsNotNone(item["completed_at"])
         self.assertIsNotNone(item["elapsed_ms"])
 
+    def test_legacy_snapshot_is_reported_instead_of_silent_missing_timing(self) -> None:
+        self.service.todo_file.write_text(
+            '{"version":46,"todos":[{"id":"old","content":"legacy","status":"completed"}],"updated_at":"2026-10-09T08:29:49Z"}',
+            encoding="utf-8",
+        )
+        state = self.service.get_state()
+        self.assertEqual(state["schema_version"], 1)
+        self.assertFalse(state["timing_available"])
+        self.assertEqual(state["timing_state"], "legacy_missing_timestamps")
+        self.assertEqual(state["legacy_timing_ids"], ["old"])
+
+    def test_new_snapshot_has_timing_schema_and_live_timestamps(self) -> None:
+        state = self.service.set_todos(
+            [
+                {"id": "root", "content": "root", "status": "in_progress"},
+                {"id": "leaf", "content": "leaf", "status": "in_progress", "parent_id": "root"},
+            ]
+        )
+        self.assertEqual(state["schema_version"], 2)
+        self.assertTrue(state["timing_available"])
+        self.assertEqual(state["timing_state"], "ok")
+        by_id = {item["id"]: item for item in state["todos"]}
+        self.assertIsNotNone(by_id["root"]["started_at"])
+        self.assertIsNotNone(by_id["leaf"]["started_at"])
+
+
 
 if __name__ == "__main__":
     unittest.main()

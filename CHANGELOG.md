@@ -23,6 +23,7 @@ All notable changes to this project will be documented here.
 
 ### Fixed
 
+- Task-stage timing now carries an explicit task schema version and reports legacy snapshots missing timestamps instead of silently showing blank timers; future task writes always persist timing schema v2.
 - pywinpty 2.0.x socket resources are explicitly closed after child exit, eliminating the repeated `ResourceWarning: unclosed socket` observed in terminal tests.
 
 ### Planned
