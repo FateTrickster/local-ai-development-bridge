@@ -260,3 +260,74 @@ class ActivityService:
             "earliest_seq": earliest_seq,
             "history_lost": history_lost,
         }
+
+    def activity_metrics(self) -> dict[str, Any]:
+        """Summarize recent observable MCP activity for the focused Dashboard.
+
+        Only ``tool_started`` events from the MCP component count as operations,
+        so start/completion pairs are not double-counted. The latest heartbeat
+        may come from any structured event, such as a background command
+        completion. This intentionally does not claim to observe model-internal
+        reasoning.
+        """
+        now = time.time()
+        payload = self.list_events(limit=500)
+        events = payload.get("events", []) if isinstance(payload, dict) else []
+
+        def epoch(item: dict[str, Any]) -> float | None:
+            raw = item.get("timestamp")
+            if not isinstance(raw, str) or not raw:
+                return None
+            try:
+                return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                return None
+
+        parsed: list[tuple[dict[str, Any], float]] = []
+        for item in events:
+            if not isinstance(item, dict):
+                continue
+            stamp = epoch(item)
+            if stamp is not None:
+                parsed.append((item, stamp))
+
+        operations = [
+            stamp
+            for item, stamp in parsed
+            if item.get("type") == "tool_started" and item.get("component", "mcp") == "mcp"
+        ]
+        one_minute = sum(1 for stamp in operations if stamp >= now - 60)
+        five_minutes = sum(1 for stamp in operations if stamp >= now - 300)
+
+        latest_item: dict[str, Any] | None = None
+        latest_stamp: float | None = None
+        if parsed:
+            latest_item, latest_stamp = max(
+                parsed,
+                key=lambda pair: (int(pair[0].get("seq", 0) or 0), pair[1]),
+            )
+
+        age_seconds = max(0.0, now - latest_stamp) if latest_stamp is not None else None
+        if age_seconds is None:
+            state = "no_activity"
+        elif age_seconds <= 15:
+            state = "active"
+        elif age_seconds <= 60:
+            state = "recent"
+        else:
+            state = "idle"
+
+        return {
+            "available": latest_item is not None,
+            "state": state,
+            "one_minute_operations": one_minute,
+            "five_minute_operations": five_minutes,
+            "five_minute_average_per_minute": round(five_minutes / 5, 1),
+            "latest_at": latest_item.get("timestamp") if latest_item else None,
+            "latest_age_seconds": round(age_seconds, 1) if age_seconds is not None else None,
+            "latest_type": latest_item.get("type") if latest_item else None,
+            "latest_tool": latest_item.get("tool") if latest_item else None,
+            "latest_component": latest_item.get("component") if latest_item else None,
+            "latest_title": latest_item.get("title") if latest_item else None,
+            "note": "Counts observable MCP operations only; model-internal reasoning is not visible to the Bridge.",
+        }

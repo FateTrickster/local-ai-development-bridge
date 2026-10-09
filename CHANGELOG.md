@@ -6,10 +6,9 @@ All notable changes to this project will be documented here.
 
 ### Added
 
-- Simple Chrome/Edge `browser-telemetry/` companion that observes ChatGPT assistant text growth and reports clearly-labelled estimated token/TPS deltas to the localhost Dashboard.
-- Separate ephemeral localhost telemetry token so browser extensions can report metrics without reusing Dashboard approval authorization.
+- Program-driven MCP activity meter on the focused Dashboard: 1-minute/5-minute operation counts, recent-activity age, and active/recent/idle state without browser scraping or Prompt dependence.
 - Program-level desktop completion popup with persistent de-duplication; Windows uses a detached WinForms MessageBox and can be disabled with `BRIDGE_DESKTOP_NOTIFICATIONS=0`.
-- Focused default Dashboard with AI output 1-minute/5-minute windows and TPS telemetry, hierarchical stage timing, task-tree highlighting, and file-change paths.
+- Focused default Dashboard with MCP activity counts/recent-activity state, hierarchical stage timing, task-tree highlighting, and file-change paths.
 - Preserved the previous full observability/control UI as `dashboard/advanced.html`.
 - Hierarchical TaskService state with `parent_id`, active-path timing, persistent start/completion timestamps, and deepest-active-leaf selection.
 - Exact client-fed AI output telemetry; the Bridge explicitly reports unavailable when the MCP client does not expose assistant token streaming instead of fabricating TPS.

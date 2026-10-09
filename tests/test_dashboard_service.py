@@ -197,7 +197,8 @@ class DashboardServiceTests(unittest.TestCase):
         with urllib.request.urlopen(base + "/", timeout=3) as response:
             html = response.read().decode("utf-8")
             self.assertEqual(response.status, 200)
-            self.assertIn("AI 输出", html)
+            self.assertIn("AI / MCP 活动", html)
+            self.assertIn("近 1 min MCP 操作", html)
             self.assertIn("阶段用时", html)
             self.assertIn("任务规划与分级", html)
             self.assertIn("文件变更", html)
@@ -208,7 +209,6 @@ class DashboardServiceTests(unittest.TestCase):
         with urllib.request.urlopen(base + "/api/session", timeout=3) as response:
             session = json.loads(response.read().decode("utf-8"))
             token = session["dashboard_token"]
-            self.assertTrue(session["telemetry_token"])
             self.assertTrue(session["confirm_writes"])
         with urllib.request.urlopen(base + "/api/workspaces", timeout=3) as response:
             payload = json.loads(response.read().decode("utf-8"))
@@ -216,7 +216,8 @@ class DashboardServiceTests(unittest.TestCase):
             self.assertEqual(payload["workspaces"][1]["workspace_id"], "docs")
         with urllib.request.urlopen(base + "/api/focus", timeout=3) as response:
             focus = json.loads(response.read().decode("utf-8"))
-            self.assertIn("ai_output", focus)
+            self.assertIn("activity_metrics", focus)
+            self.assertIn("one_minute_operations", focus["activity_metrics"])
             self.assertIn("task", focus)
             self.assertIn("file_changes", focus)
         with urllib.request.urlopen(base + "/api/state", timeout=3) as response:
@@ -272,7 +273,7 @@ class DashboardServiceTests(unittest.TestCase):
         started = self.service.start()
         base = started["url"].rstrip("/")
         with urllib.request.urlopen(base + "/api/session", timeout=3) as response:
-            token = json.loads(response.read().decode("utf-8"))["telemetry_token"]
+            token = json.loads(response.read().decode("utf-8"))["dashboard_token"]
         request = urllib.request.Request(
             base + "/api/telemetry/ai-output",
             data=json.dumps({
@@ -284,17 +285,16 @@ class DashboardServiceTests(unittest.TestCase):
             method="POST",
             headers={
                 "Content-Type": "application/json",
-                "X-Bridge-Telemetry-Token": token,
-                "Origin": "chrome-extension://telemetry-test",
+                "X-Bridge-Dashboard-Token": token,
             },
         )
         with urllib.request.urlopen(request, timeout=3) as response:
             payload = json.loads(response.read().decode("utf-8"))
             self.assertEqual(payload["tps"], 266.0)
-        with urllib.request.urlopen(base + "/api/focus", timeout=3) as response:
-            focus = json.loads(response.read().decode("utf-8"))
-            self.assertEqual(focus["ai_output"]["latest_tps"], 266.0)
-            self.assertEqual(focus["ai_output"]["one_minute"]["output_tokens"], 2660)
+        with urllib.request.urlopen(base + "/api/ai-output", timeout=3) as response:
+            telemetry = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(telemetry["latest_tps"], 266.0)
+            self.assertEqual(telemetry["one_minute"]["output_tokens"], 2660)
 
 
     def test_ai_telemetry_rejects_missing_token(self) -> None:
@@ -304,7 +304,7 @@ class DashboardServiceTests(unittest.TestCase):
             base + "/api/telemetry/ai-output",
             data=b'{"output_tokens":10,"duration_ms":100}',
             method="POST",
-            headers={"Content-Type": "application/json", "Origin": "https://chatgpt.com"},
+            headers={"Content-Type": "application/json"},
         )
         with self.assertRaises(urllib.error.HTTPError) as denied:
             urllib.request.urlopen(request, timeout=3)

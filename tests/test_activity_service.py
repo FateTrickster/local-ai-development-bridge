@@ -62,6 +62,27 @@ class ActivityServiceTests(unittest.TestCase):
         after = self.service.list_events(limit=10, after_seq=3)
         self.assertEqual([item["seq"] for item in after["events"]], [4, 5])
 
+
+    def test_activity_metrics_count_mcp_operations_once(self) -> None:
+        first = self.service.start("read_file", "Read file")
+        self.service.finish(first, tool="read_file", title="Read file completed", status="completed")
+        second = self.service.start("run_command", "Run command")
+        self.service.finish(second, tool="run_command", title="Run command completed", status="completed")
+        self.service.emit(
+            "file_changed",
+            status="completed",
+            title="file changed",
+            component="files",
+        )
+        metrics = self.service.activity_metrics()
+        self.assertTrue(metrics["available"])
+        self.assertEqual(metrics["one_minute_operations"], 2)
+        self.assertEqual(metrics["five_minute_operations"], 2)
+        self.assertEqual(metrics["five_minute_average_per_minute"], 0.4)
+        self.assertEqual(metrics["latest_component"], "files")
+        self.assertEqual(metrics["state"], "active")
+        self.assertLess(metrics["latest_age_seconds"], 5)
+
     def test_redact_text_bearer(self) -> None:
         self.assertEqual(redact_text("Authorization: Bearer abc123"), "Authorization: [REDACTED]")
 
