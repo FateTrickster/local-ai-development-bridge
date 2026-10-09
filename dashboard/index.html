@@ -155,20 +155,21 @@
   function renderStages(task){
     const timingState=task&&task.timing_state||'ok';
     const todos=Array.isArray(task&&task.todos)?task.todos:[]; const byId=new Map(todos.map(x=>[String(x.id),x]));
-    const path=Array.isArray(task&&task.active_path)?task.active_path.map(id=>byId.get(String(id))).filter(Boolean):[];
+    const pathIds=Array.isArray(task&&task.active_path)&&task.active_path.length ? task.active_path : (Array.isArray(task&&task.display_path)?task.display_path:[]);
+    const path=pathIds.map(id=>byId.get(String(id))).filter(Boolean);
     let big=null, mid=null, small=null;
     if(path.length===1){ big=path[0]; }
     else if(path.length===2){ big=path[0]; mid=path[1]; }
     else if(path.length>=3){ big=path[0]; mid=path[1]; small=path[path.length-1]; }
     const rows=[['big',big],['mid',mid],['small',small]];
     rows.forEach(([key,item])=>{
-      setText(`stage-${key}-name`, item&&item.content||'?');
+      setText(`stage-${key}-name`, item&&item.content||'\u2014');
       const missingTiming=Boolean(item && item.status!=='pending' && !item.started_at);
-      setText(`stage-${key}-time`, missingTiming ? '???????' : item?fmtDuration(liveElapsed(item)):'?');
+      setText(`stage-${key}-time`, missingTiming ? '\u65e7\u7248\u65e0\u8ba1\u65f6\u6570\u636e' : item?fmtDuration(liveElapsed(item)):'\u2014');
       $(`stage-${key}`).classList.toggle('active', Boolean(item && String(item.id)===String(task.active_leaf_id)));
     });
     const timingHint=document.querySelector('#stage-big')?.parentElement?.previousElementSibling?.querySelector('.small');
-    if(timingHint) timingHint.textContent=timingState==='legacy_missing_timestamps' ? '???????????? Bridge ??????????' : '????????????';
+    if(timingHint) timingHint.textContent=timingState==='legacy_missing_timestamps' ? '\u65e7\u4efb\u52a1\u7f3a\u5c11\u65f6\u95f4\u6233\uff1b\u65b0\u7248 Bridge \u7684\u65b0\u4efb\u52a1\u4f1a\u6062\u590d\u8ba1\u65f6' : '\u7531\u4efb\u52a1\u72b6\u6001\u65f6\u95f4\u6233\u81ea\u52a8\u8ba1\u7b97';
   }
 
   function renderTree(task){

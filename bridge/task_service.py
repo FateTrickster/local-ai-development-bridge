@@ -128,16 +128,31 @@ class TaskService:
                 current["elapsed_ms"] = _elapsed_ms(current.get("started_at"), current.get("completed_at"))
                 enriched.append(current)
 
-            in_progress = [item for item in enriched if item.get("status") == "in_progress"]
-            active_leaf = max(in_progress, key=lambda item: int(item.get("level", 0)), default=None)
-            active_path: list[str] = []
-            if active_leaf is not None:
-                cursor: dict[str, Any] | None = active_leaf
+            def path_for(item: dict[str, Any] | None) -> list[str]:
+                result: list[str] = []
+                cursor = item
+                seen: set[str] = set()
                 while cursor is not None:
-                    active_path.append(str(cursor.get("id")))
+                    todo_id = str(cursor.get("id"))
+                    if todo_id in seen:
+                        break
+                    seen.add(todo_id)
+                    result.append(todo_id)
                     parent_id = cursor.get("parent_id")
                     cursor = by_id.get(str(parent_id)) if parent_id else None
-                active_path.reverse()
+                result.reverse()
+                return result
+
+            in_progress = [item for item in enriched if item.get("status") == "in_progress"]
+            active_leaf = max(in_progress, key=lambda item: int(item.get("level", 0)), default=None)
+            active_path = path_for(active_leaf)
+            completed = [item for item in enriched if item.get("status") == "completed"]
+            last_completed_leaf = max(
+                completed,
+                key=lambda item: (str(item.get("completed_at") or ""), int(item.get("level", 0))),
+                default=None,
+            )
+            display_path = active_path or path_for(last_completed_leaf)
 
             progress_count = 0
             for segment in self._segments():
@@ -160,6 +175,8 @@ class TaskService:
                 "todos": enriched,
                 "active_leaf_id": active_leaf.get("id") if active_leaf else None,
                 "active_path": active_path,
+                "display_path": display_path,
+                "display_path_source": "active" if active_path else ("completed" if display_path else "none"),
                 "progress_events": progress_count,
                 "timing_state": timing_state,
                 "timing_available": not legacy_timing_ids,

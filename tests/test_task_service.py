@@ -137,6 +137,28 @@ class TaskServiceTests(unittest.TestCase):
         self.assertIsNotNone(by_id["root"]["started_at"])
         self.assertIsNotNone(by_id["leaf"]["started_at"])
 
+    def test_completed_chain_remains_available_for_stage_display(self) -> None:
+        self.service.set_todos(
+            [
+                {"id": "root", "content": "root", "status": "in_progress"},
+                {"id": "sub", "content": "sub", "status": "in_progress", "parent_id": "root"},
+                {"id": "leaf", "content": "leaf", "status": "in_progress", "parent_id": "sub"},
+            ]
+        )
+        state = self.service.set_todos(
+            [
+                {"id": "root", "content": "root", "status": "completed"},
+                {"id": "sub", "content": "sub", "status": "completed", "parent_id": "root"},
+                {"id": "leaf", "content": "leaf", "status": "completed", "parent_id": "sub"},
+            ]
+        )
+        self.assertEqual(state["active_path"], [])
+        self.assertEqual(state["display_path"], ["root", "sub", "leaf"])
+        self.assertEqual(state["display_path_source"], "completed")
+        by_id = {item["id"]: item for item in state["todos"]}
+        self.assertIsNotNone(by_id["root"]["elapsed_ms"])
+        self.assertIsNotNone(by_id["leaf"]["elapsed_ms"])
+
 
 
 if __name__ == "__main__":
