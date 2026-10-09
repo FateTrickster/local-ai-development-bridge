@@ -7,9 +7,11 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .activity_service import ActivityService, redact_text
 from .config import Settings
 from .pathguard import WorkspaceGuard
 
@@ -24,6 +26,10 @@ _DEFAULT_READ_BYTES = 32 * 1024
 _MAX_READ_BYTES = 128 * 1024
 
 
+def _iso_from_epoch(value: float) -> str:
+    return datetime.fromtimestamp(value, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 @dataclass
 class CommandRecord:
     command_id: str
@@ -31,6 +37,7 @@ class CommandRecord:
     cwd: str
     process: Any
     started_at: float
+    finished_at: float | None = None
     buffer: bytearray = field(default_factory=bytearray)
     earliest_offset: int = 0
     total_offset: int = 0
@@ -45,9 +52,15 @@ class CommandRecord:
 
 
 class TerminalService:
-    def __init__(self, settings: Settings, guard: WorkspaceGuard):
+    def __init__(
+        self,
+        settings: Settings,
+        guard: WorkspaceGuard,
+        activity: ActivityService | None = None,
+    ):
         self.settings = settings
         self.guard = guard
+        self.activity = activity
         self._commands: dict[str, CommandRecord] = {}
         self._registry_lock = threading.RLock()
 
@@ -86,10 +99,27 @@ class TerminalService:
             record.condition.notify_all()
 
     def _finalize(self, record: CommandRecord, exit_code: int | None) -> None:
+        finished_at = time.time()
         with record.condition:
             record.exit_code = exit_code
+            record.finished_at = finished_at
             record.status = "completed" if exit_code in (0, None) else "failed"
             record.condition.notify_all()
+        if self.activity is not None:
+            elapsed_ms = round((finished_at - record.started_at) * 1000)
+            self.activity.emit(
+                "command_completed" if record.status == "completed" else "command_failed",
+                status=record.status,
+                title=f"Command {record.status}",
+                component="terminal",
+                details={
+                    "command_id": record.command_id,
+                    "command_preview": redact_text(record.command, 240),
+                    "cwd": record.cwd,
+                    "exit_code": record.exit_code,
+                },
+                duration_ms=elapsed_ms,
+            )
 
     def _reader(self, record: CommandRecord) -> None:
         process = record.process
@@ -177,6 +207,19 @@ class TerminalService:
         )
         with self._registry_lock:
             self._commands[command_id] = record
+        if self.activity is not None:
+            self.activity.emit(
+                "command_started",
+                status="running",
+                title="Command started",
+                component="terminal",
+                details={
+                    "command_id": command_id,
+                    "command_preview": redact_text(command, 240),
+                    "cwd": record.cwd,
+                    "background": bool(background),
+                },
+            )
         threading.Thread(target=self._reader, args=(record,), daemon=True, name=f"terminal-{command_id[:8]}").start()
         self._prune()
 
@@ -210,6 +253,32 @@ class TerminalService:
                 "output": chunk.decode("utf-8", errors="replace"),
                 "has_more": next_offset < record.total_offset,
             }
+
+    def list_commands(self, limit: int = 20, tail_bytes: int = 4096) -> dict[str, Any]:
+        limit = max(1, min(int(limit), 64))
+        tail_bytes = max(0, min(int(tail_bytes), 16_384))
+        with self._registry_lock:
+            records = sorted(self._commands.values(), key=lambda item: item.started_at, reverse=True)[:limit]
+        now = time.time()
+        commands: list[dict[str, Any]] = []
+        for record in records:
+            with record.lock:
+                end = record.finished_at or now
+                tail = bytes(record.buffer[-tail_bytes:]) if tail_bytes else b""
+                commands.append(
+                    {
+                        "command_id": record.command_id,
+                        "command_preview": redact_text(record.command, 240),
+                        "cwd": record.cwd,
+                        "status": record.status,
+                        "exit_code": record.exit_code,
+                        "started_at": _iso_from_epoch(record.started_at),
+                        "elapsed_ms": max(0, round((end - record.started_at) * 1000)),
+                        "output_tail": redact_text(tail.decode("utf-8", errors="replace"), 8000),
+                        "output_lost": record.earliest_offset > 0,
+                    }
+                )
+        return {"commands": commands, "total_tracked": len(self._commands)}
 
     def send_command_input(self, command_id: str, input: str, append_newline: bool = True) -> dict[str, Any]:
         self._require_commands()

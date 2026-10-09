@@ -30,6 +30,18 @@ class TaskServiceTests(unittest.TestCase):
         state = self.service.get_state()
         self.assertEqual(state["progress_events"], 1)
 
+    def test_progress_events_are_queryable(self) -> None:
+        self.service.set_todos([{"id": "a", "content": "first", "status": "in_progress"}])
+        self.service.report_progress("one", current=1, total=3)
+        self.service.report_progress("two", current=2, total=3)
+        self.service.report_progress("three", current=3, total=3)
+        tail = self.service.get_progress_events(limit=2)
+        self.assertEqual([item["message"] for item in tail["events"]], ["two", "three"])
+        self.assertTrue(tail["truncated"])
+        after = self.service.get_progress_events(limit=10, after_seq=1)
+        self.assertEqual([item["seq"] for item in after["events"]], [2, 3])
+        self.assertEqual(after["next_seq"], 3)
+
     def test_multiple_in_progress_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "MULTIPLE_IN_PROGRESS_TODOS"):
             self.service.set_todos(

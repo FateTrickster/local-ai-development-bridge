@@ -69,6 +69,16 @@ class TerminalServiceTests(unittest.TestCase):
         self.assertEqual(final["status"], "completed")
         self.assertIn("got:abc", final["output"].replace("\r", ""))
 
+    def test_command_snapshot_is_bounded_and_redacted(self) -> None:
+        self.service.run_command("Write-Output 'TOKEN=private-value'", background=False, timeout_ms=10_000)
+        snapshot = self.service.list_commands(limit=10, tail_bytes=4096)
+        self.assertEqual(snapshot["total_tracked"], 1)
+        item = snapshot["commands"][0]
+        self.assertEqual(item["status"], "completed")
+        self.assertNotIn("private-value", item["command_preview"])
+        self.assertNotIn("private-value", item["output_tail"])
+        self.assertIn("[REDACTED]", item["output_tail"])
+
 
 if __name__ == "__main__":
     unittest.main()

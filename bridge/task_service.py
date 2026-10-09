@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,47 @@ class TaskService:
                 except OSError:
                     progress_count = 0
             return {**snapshot, "progress_events": progress_count}
+
+    def get_progress_events(self, limit: int = 100, after_seq: int | None = None) -> dict[str, Any]:
+        limit = max(1, min(int(limit), 500))
+        after = max(0, int(after_seq or 0))
+        events: list[dict[str, Any]] = []
+        truncated = False
+        if not self.progress_file.is_file():
+            return {"events": [], "next_seq": after, "truncated": False}
+        try:
+            if after > 0:
+                with self.progress_file.open("r", encoding="utf-8", errors="replace") as handle:
+                    for line in handle:
+                        try:
+                            event = json.loads(line)
+                            seq = int(event.get("seq", 0))
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            continue
+                        if seq <= after:
+                            continue
+                        if len(events) >= limit:
+                            truncated = True
+                            break
+                        events.append(event)
+            else:
+                tail: deque[dict[str, Any]] = deque(maxlen=limit)
+                total_valid = 0
+                with self.progress_file.open("r", encoding="utf-8", errors="replace") as handle:
+                    for line in handle:
+                        try:
+                            event = json.loads(line)
+                            int(event.get("seq", 0))
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            continue
+                        total_valid += 1
+                        tail.append(event)
+                events = list(tail)
+                truncated = total_valid > len(events)
+        except OSError:
+            return {"events": [], "next_seq": after, "truncated": False}
+        next_seq = int(events[-1].get("seq", after)) if events else after
+        return {"events": events, "next_seq": next_seq, "truncated": truncated}
 
     def set_todos(self, todos: list[dict[str, Any]]) -> dict[str, Any]:
         if len(todos) > 24:

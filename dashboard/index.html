@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Local AI Development Bridge</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg:#f5f6f8; --panel:#ffffff; --panel-2:#f0f2f5; --text:#17191c; --muted:#6f7680;
+      --border:#dfe3e8; --ok:#177245; --warn:#9a6700; --bad:#b42318; --accent:#3157d5; --code:#101418;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#111315; --panel:#181b1f; --panel-2:#20242a; --text:#eef1f4; --muted:#9ba3ad; --border:#30363d; --ok:#4ac58b; --warn:#e0a82e; --bad:#ff766d; --accent:#7c9cff; --code:#0b0d0f; }
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; font:14px/1.5 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--text); }
+    main { max-width:1320px; margin:0 auto; padding:22px; }
+    h1,h2,h3,p { margin:0; }
+    .top { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:18px; }
+    .title h1 { font-size:23px; font-weight:720; letter-spacing:.1px; }
+    .title p { color:var(--muted); margin-top:5px; }
+    .live { display:flex; align-items:center; gap:8px; white-space:nowrap; color:var(--muted); }
+    .dot { width:9px; height:9px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 14%,transparent); }
+    .grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; }
+    .card,.panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; }
+    .card { padding:13px 14px; min-height:82px; }
+    .card .label { color:var(--muted); font-size:12px; }
+    .card .value { margin-top:7px; font-size:17px; font-weight:700; overflow-wrap:anywhere; }
+    .card .sub { margin-top:3px; color:var(--muted); font-size:12px; }
+    .task { margin-top:12px; padding:15px; }
+    .task-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .task-title { font-weight:700; font-size:16px; }
+    .task-sub { color:var(--muted); margin-top:4px; }
+    .bar { height:8px; background:var(--panel-2); border-radius:999px; overflow:hidden; margin-top:12px; }
+    .bar > span { display:block; height:100%; width:0; background:var(--accent); transition:width .25s ease; }
+    .todos { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:12px; }
+    .todo { padding:10px 11px; background:var(--panel-2); border-radius:9px; display:flex; align-items:flex-start; gap:9px; min-width:0; }
+    .todo .state { width:8px; height:8px; border-radius:50%; margin-top:6px; flex:0 0 auto; }
+    .todo .content { min-width:0; overflow-wrap:anywhere; }
+    .todo small { display:block; color:var(--muted); margin-top:2px; }
+    .state.completed { background:var(--ok); } .state.in_progress { background:var(--accent); } .state.pending { background:var(--muted); }
+    .tabs { display:flex; flex-wrap:wrap; gap:7px; margin:14px 0 9px; }
+    button { font:inherit; color:inherit; background:var(--panel); border:1px solid var(--border); padding:8px 12px; border-radius:9px; cursor:pointer; }
+    button.active { border-color:var(--accent); color:var(--accent); font-weight:650; }
+    .panel { padding:14px; }
+    .panel[hidden] { display:none; }
+    .panel-head { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:10px; }
+    .panel-head h2 { font-size:15px; }
+    .muted { color:var(--muted); }
+    .timeline { display:flex; flex-direction:column; gap:0; }
+    .event { display:grid; grid-template-columns:92px 115px minmax(0,1fr) auto; gap:10px; align-items:start; padding:10px 3px; border-bottom:1px solid var(--border); }
+    .event:last-child { border-bottom:0; }
+    .time,.type { color:var(--muted); font-size:12px; }
+    .event-title { font-weight:600; overflow-wrap:anywhere; }
+    .event-details { color:var(--muted); font-size:12px; margin-top:3px; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .badge { display:inline-flex; align-items:center; border:1px solid var(--border); border-radius:999px; padding:2px 7px; font-size:11px; }
+    .badge.completed,.badge.ready { color:var(--ok); } .badge.failed { color:var(--bad); } .badge.running { color:var(--accent); }
+    .commands { display:flex; flex-direction:column; gap:9px; }
+    .command { border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+    .command summary { cursor:pointer; padding:10px 12px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:10px; align-items:center; }
+    .command summary::marker { color:var(--muted); }
+    .cmd { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; overflow-wrap:anywhere; }
+    pre { margin:0; padding:12px; background:var(--code); color:#d8e0e8; overflow:auto; max-height:300px; font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre-wrap; word-break:break-word; }
+    .system { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+    .row { display:flex; justify-content:space-between; gap:16px; padding:9px 10px; background:var(--panel-2); border-radius:8px; min-width:0; }
+    .row span:last-child { text-align:right; overflow-wrap:anywhere; }
+    .progress-list { display:flex; flex-direction:column; gap:8px; }
+    .progress-item { padding:10px 11px; background:var(--panel-2); border-radius:9px; }
+    .progress-item .meta { color:var(--muted); font-size:12px; margin-top:4px; }
+    .empty { color:var(--muted); padding:16px 2px; }
+    .error { color:var(--bad); }
+    @media (max-width:860px) { .grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .event { grid-template-columns:78px minmax(0,1fr) auto; } .event .type { display:none; } .todos,.system { grid-template-columns:1fr; } }
+    @media (max-width:520px) { main { padding:14px; } .top { flex-direction:column; } .grid { grid-template-columns:1fr; } .event { grid-template-columns:70px minmax(0,1fr); } .event .badge { display:none; } }
+  </style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <div class="title"><h1>Local AI Development Bridge</h1><p>本地只读可观察性控制台 · 自动刷新</p></div>
+    <div class="live"><span class="dot" id="live-dot"></span><span id="live-text">正在连接…</span></div>
+  </div>
+
+  <section class="grid" aria-label="系统摘要">
+    <div class="card"><div class="label">当前任务</div><div class="value" id="current-task">—</div><div class="sub" id="task-counts">—</div></div>
+    <div class="card"><div class="label">Bridge</div><div class="value" id="bridge-state">—</div><div class="sub" id="bridge-address">—</div></div>
+    <div class="card"><div class="label">VS Code Companion</div><div class="value" id="vscode-state">—</div><div class="sub" id="vscode-detail">—</div></div>
+    <div class="card"><div class="label">终端</div><div class="value" id="terminal-state">—</div><div class="sub" id="terminal-detail">—</div></div>
+    <div class="card"><div class="label">Quick Tunnel</div><div class="value" id="tunnel-state">—</div><div class="sub" id="tunnel-detail">—</div></div>
+  </section>
+
+  <section class="panel task">
+    <div class="task-head"><div><div class="task-title">任务进度</div><div class="task-sub" id="task-updated">尚无任务状态</div></div><strong id="task-percent">0%</strong></div>
+    <div class="bar"><span id="task-bar"></span></div>
+    <div class="todos" id="todos"></div>
+  </section>
+
+  <nav class="tabs" aria-label="控制台视图">
+    <button type="button" class="active" data-tab="activity">实时活动</button>
+    <button type="button" data-tab="progress">进度记录</button>
+    <button type="button" data-tab="terminal">终端</button>
+    <button type="button" data-tab="system">系统状态</button>
+    <button type="button" data-tab="startup">启动状态</button>
+  </nav>
+
+  <section class="panel" data-panel="activity">
+    <div class="panel-head"><h2>Activity Timeline</h2><span class="muted" id="activity-count">0 条</span></div>
+    <div class="timeline" id="activity-list"></div>
+  </section>
+
+  <section class="panel" data-panel="progress" hidden>
+    <div class="panel-head"><h2>Progress Journal</h2><span class="muted" id="progress-count">0 条</span></div>
+    <div class="progress-list" id="progress-list"></div>
+  </section>
+
+  <section class="panel" data-panel="terminal" hidden>
+    <div class="panel-head"><h2>Terminal Commands</h2><span class="muted" id="command-count">0 条</span></div>
+    <div class="commands" id="commands"></div>
+  </section>
+
+  <section class="panel" data-panel="system" hidden>
+    <div class="panel-head"><h2>System State</h2><span class="muted">只读</span></div>
+    <div class="system" id="system-grid"></div>
+  </section>
+
+  <section class="panel" data-panel="startup" hidden>
+    <div class="panel-head"><h2>Launcher / Tunnel State</h2><span class="muted">不包含 capability token</span></div>
+    <pre id="launcher-json">尚未由一键启动器管理。</pre>
+  </section>
+</main>
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const escText = (v) => v == null ? '—' : String(v);
+  const fmtTime = (value) => {
+    if (!value) return '—';
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  };
+  const fmtDateTime = (value) => {
+    if (!value) return '—';
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString();
+  };
+  const setText = (id, value) => { const el=$(id); if (el) el.textContent=escText(value); };
+  const badge = (status) => {
+    const s = document.createElement('span'); s.className='badge '+(status||''); s.textContent=status||'unknown'; return s;
+  };
+  function renderTodos(task, counts) {
+    const host=$('todos'); host.replaceChildren();
+    const todos=Array.isArray(task.todos)?task.todos:[];
+    const total=todos.length; const completed=Number(counts.completed||0);
+    const percent=total?Math.round(completed/total*100):0;
+    $('task-bar').style.width=percent+'%'; setText('task-percent', percent+'%');
+    setText('task-counts', `${completed}/${total} 已完成 · ${counts.in_progress||0} 进行中`);
+    setText('task-updated', task.updated_at ? `更新时间 ${fmtDateTime(task.updated_at)} · progress events ${task.progress_events||0}` : '尚无任务状态');
+    const active=todos.find(x=>x && x.status==='in_progress');
+    setText('current-task', active ? active.content : (total && completed===total ? '全部完成' : '暂无进行中任务'));
+    if (!total) { host.innerHTML='<div class="empty">尚未建立 todo。</div>'; return; }
+    todos.forEach(item => {
+      const row=document.createElement('div'); row.className='todo';
+      const dot=document.createElement('span'); dot.className='state '+item.status;
+      const body=document.createElement('div'); body.className='content';
+      const text=document.createElement('div'); text.textContent=item.content;
+      const small=document.createElement('small'); small.textContent=`${item.id} · ${item.status}`;
+      body.append(text,small); row.append(dot,body); host.append(row);
+    });
+  }
+  function renderActivity(payload) {
+    const host=$('activity-list'); host.replaceChildren();
+    const events=Array.isArray(payload.events)?payload.events.slice().reverse():[];
+    setText('activity-count', `${events.length} 条`);
+    if (!events.length) { host.innerHTML='<div class="empty">尚无 Activity 事件。</div>'; return; }
+    events.forEach(item=>{
+      const row=document.createElement('div'); row.className='event';
+      const time=document.createElement('div'); time.className='time'; time.textContent=fmtTime(item.timestamp);
+      const type=document.createElement('div'); type.className='type'; type.textContent=item.type||'event';
+      const body=document.createElement('div');
+      const title=document.createElement('div'); title.className='event-title'; title.textContent=item.title||item.type||'event';
+      body.append(title);
+      if (item.details && Object.keys(item.details).length) { const d=document.createElement('div'); d.className='event-details'; d.textContent=JSON.stringify(item.details,null,2); body.append(d); }
+      row.append(time,type,body,badge(item.status)); host.append(row);
+    });
+  }
+  function renderProgress(payload) {
+    const host=$('progress-list'); host.replaceChildren();
+    const events=Array.isArray(payload.events)?payload.events.slice().reverse():[];
+    setText('progress-count', `${events.length} 条`);
+    if (!events.length) { host.innerHTML='<div class="empty">尚无进度记录。</div>'; return; }
+    events.forEach(item=>{
+      const box=document.createElement('div'); box.className='progress-item';
+      const msg=document.createElement('div'); msg.textContent=item.message||'—';
+      const meta=document.createElement('div'); meta.className='meta';
+      const measures=[]; if (item.current!=null && item.total!=null) measures.push(`${item.current}/${item.total}`); if (item.phase!=null && item.phase_total!=null) measures.push(`阶段 ${item.phase}/${item.phase_total}`);
+      meta.textContent=[fmtDateTime(item.created_at), item.todo_id||'未关联 todo', ...measures].join(' · ');
+      box.append(msg,meta); host.append(box);
+    });
+  }
+  function renderCommands(payload) {
+    const host=$('commands'); host.replaceChildren();
+    const commands=Array.isArray(payload.commands)?payload.commands:[];
+    setText('command-count', `${commands.length} 条`);
+    const running=commands.filter(x=>x.status==='running').length;
+    setText('terminal-state', running ? `${running} 运行中` : 'Idle');
+    setText('terminal-detail', `${payload.total_tracked||0} 个已跟踪命令`);
+    if (!commands.length) { host.innerHTML='<div class="empty">当前没有已跟踪终端命令。</div>'; return; }
+    commands.forEach(item=>{
+      const details=document.createElement('details'); details.className='command';
+      const summary=document.createElement('summary');
+      const st=badge(item.status); const cmd=document.createElement('span'); cmd.className='cmd'; cmd.textContent=item.command_preview||'(empty)';
+      const elapsed=document.createElement('span'); elapsed.className='muted'; elapsed.textContent=`${item.elapsed_ms||0} ms`;
+      summary.append(st,cmd,elapsed); details.append(summary);
+      const pre=document.createElement('pre'); pre.textContent=item.output_tail||'(no output)'; details.append(pre); host.append(details);
+    });
+  }
+  function renderSystem(state) {
+    const s=state.system||{}; const v=state.vscode||{}; const l=state.launcher||{}; const t=l.tunnel||{};
+    setText('bridge-state','Online'); setText('bridge-address',`${s.bridge_host||'127.0.0.1'}:${s.bridge_port||'—'}`);
+    const vsReady=v.provider_state==='ready'; setText('vscode-state',vsReady?'Ready':'Not ready'); setText('vscode-detail',v.provider_state_reason||'—');
+    const tunnelEnabled=l.tunnel_enabled!==false && (l.managed_by_launcher || t.provider);
+    setText('tunnel-state', t.running?'Online':(tunnelEnabled?'Offline':'Disabled'));
+    setText('tunnel-detail', t.public_origin||l.phase||'未由 launcher 管理');
+    setText('launcher-json', JSON.stringify(l,null,2));
+    const localSmoke=l.smoke&&l.smoke.local?l.smoke.local.status:'—'; const publicSmoke=l.smoke&&l.smoke.public?l.smoke.public.status:'—';
+    const items=[
+      ['Workspace',s.workspace_root],['Write permission',s.allow_write?'Enabled':'Disabled'],['Command permission',s.allow_commands?'Enabled':'Disabled'],
+      ['Bridge',`${s.bridge_host}:${s.bridge_port}`],['Dashboard',`127.0.0.1:${s.dashboard_port||'—'}`],['VS Code',v.provider_state||'unknown'],
+      ['VS Code reason',v.provider_state_reason||'—'],['Open documents',Array.isArray(v.open_documents)?v.open_documents.length:0],
+      ['Launcher status',l.status||'not_managed'],['Launcher phase',l.phase||'idle'],['Tunnel',t.public_origin||'—'],['Local smoke',localSmoke],['Public smoke',publicSmoke]
+    ];
+    const host=$('system-grid'); host.replaceChildren(); items.forEach(([k,val])=>{const row=document.createElement('div');row.className='row';const a=document.createElement('span');a.className='muted';a.textContent=k;const b=document.createElement('span');b.textContent=escText(val);row.append(a,b);host.append(row);});
+  }
+  async function refresh() {
+    try {
+      const res=await fetch('/api/state',{cache:'no-store'}); if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      const state=await res.json();
+      renderTodos(state.task||{},state.todo_counts||{}); renderActivity(state.activity||{}); renderProgress(state.progress||{}); renderCommands(state.commands||{}); renderSystem(state);
+      $('live-dot').style.background='var(--ok)'; setText('live-text',`已连接 · ${new Date().toLocaleTimeString()}`); $('live-text').classList.remove('error');
+    } catch (err) {
+      $('live-dot').style.background='var(--bad)'; setText('live-text',`连接失败 · ${err.message||err}`); $('live-text').classList.add('error');
+    }
+  }
+  document.querySelectorAll('[data-tab]').forEach(btn=>btn.addEventListener('click',()=>{
+    document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b===btn));
+    document.querySelectorAll('[data-panel]').forEach(p=>p.hidden=p.dataset.panel!==btn.dataset.tab);
+  }));
+  async function pollLoop() { await refresh(); setTimeout(pollLoop,1500); }
+  pollLoop();
+})();
+</script>
+</body>
+</html>
