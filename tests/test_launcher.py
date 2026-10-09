@@ -16,13 +16,16 @@ class LauncherHelperTests(unittest.TestCase):
             "a.example.com,b.example.com,c.example.com",
         )
 
-    def test_server_env_injects_exact_tunnel_host_and_permissions(self) -> None:
+    def test_server_env_injects_exact_tunnel_host_permissions_and_approvals(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             args = argparse.Namespace(
                 workspace=temp,
                 readonly=True,
                 bridge_port=8123,
                 dashboard_port=8877,
+                confirm_writes=True,
+                confirm_commands=True,
+                approval_ttl=180,
             )
             with patch.dict(os.environ, {"BRIDGE_ALLOWED_HOSTS": "existing.example.com"}, clear=False):
                 env = launcher._server_env(
@@ -34,6 +37,9 @@ class LauncherHelperTests(unittest.TestCase):
             self.assertEqual(env["ALLOW_COMMANDS"], "0")
             self.assertEqual(env["BRIDGE_PORT"], "8123")
             self.assertEqual(env["BRIDGE_DASHBOARD_PORT"], "8877")
+            self.assertEqual(env["BRIDGE_CONFIRM_WRITES"], "1")
+            self.assertEqual(env["BRIDGE_CONFIRM_COMMANDS"], "1")
+            self.assertEqual(env["BRIDGE_APPROVAL_TTL_SECONDS"], "180")
             self.assertEqual(env["BRIDGE_ALLOWED_HOSTS"], "test-host.trycloudflare.com")
             self.assertEqual(env["BRIDGE_ALLOWED_ORIGINS"], "https://test-host.trycloudflare.com")
             self.assertNotIn("BRIDGE_TOKEN", {k: v for k, v in env.items() if k not in os.environ})
@@ -45,6 +51,9 @@ class LauncherHelperTests(unittest.TestCase):
                 readonly=False,
                 bridge_port=8123,
                 dashboard_port=8877,
+                confirm_writes=False,
+                confirm_commands=False,
+                approval_ttl=300,
             )
             with patch.dict(
                 os.environ,
@@ -59,6 +68,8 @@ class LauncherHelperTests(unittest.TestCase):
             self.assertNotIn("BRIDGE_ALLOWED_ORIGINS", env)
             self.assertEqual(env["ALLOW_WRITE"], "1")
             self.assertEqual(env["ALLOW_COMMANDS"], "1")
+            self.assertEqual(env["BRIDGE_CONFIRM_WRITES"], "0")
+            self.assertEqual(env["BRIDGE_CONFIRM_COMMANDS"], "0")
 
     def test_port_available_detects_bound_port(self) -> None:
         import socket

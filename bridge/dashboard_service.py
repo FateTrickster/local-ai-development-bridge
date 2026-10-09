@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -8,6 +9,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .activity_service import ActivityService
+from .approval_service import ApprovalService
 from .config import Settings
 from .launcher_state import LauncherStateStore
 from .jsonl_utils import JsonlRotationPolicy
@@ -21,11 +23,11 @@ _DASHBOARD_HTML = _PACKAGE_ROOT / "dashboard" / "index.html"
 
 
 class DashboardService:
-    """Read-only localhost dashboard for bridge observability.
+    """Localhost control plane for observability and explicit approvals.
 
     This server intentionally runs on a separate localhost-only port so it is not
-    exposed through the MCP Quick Tunnel. It provides GET-only status APIs and a
-    static dashboard; it cannot mutate files, run commands, or change permissions.
+    exposed through the MCP Quick Tunnel. Mutations are limited to approve/deny
+    decisions and require a same-origin-only dashboard token header.
     """
 
     def __init__(
@@ -36,6 +38,7 @@ class DashboardService:
         terminal: TerminalService,
         vscode: VSCodeService,
         launcher_state: LauncherStateStore | None = None,
+        approvals: ApprovalService | None = None,
     ):
         self.settings = settings
         self.activity = activity
@@ -43,6 +46,7 @@ class DashboardService:
         self.terminal = terminal
         self.vscode = vscode
         self.launcher_state = launcher_state or LauncherStateStore()
+        self.approvals = approvals or ApprovalService(ttl_seconds=settings.approval_ttl_seconds)
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self.port: int | None = None
@@ -54,6 +58,7 @@ class DashboardService:
         commands = self.terminal.list_commands(limit=20, tail_bytes=4096)
         vscode = self.vscode.health()
         launcher = self.launcher_state.read()
+        approval_state = self.approvals.list_requests(include_terminal=True, limit=100)
         rotation = JsonlRotationPolicy.from_env()
         todos = task_state.get("todos", []) if isinstance(task_state.get("todos"), list) else []
         counts = {
@@ -72,6 +77,9 @@ class DashboardService:
                 "dashboard_port": self.port,
                 "log_rotation_max_bytes": rotation.max_bytes,
                 "log_rotation_backups": rotation.backup_count,
+                "confirm_writes": self.settings.confirm_writes,
+                "confirm_commands": self.settings.confirm_commands,
+                "approval_ttl_seconds": self.settings.approval_ttl_seconds,
             },
             "task": task_state,
             "todo_counts": counts,
@@ -80,13 +88,14 @@ class DashboardService:
             "commands": commands,
             "vscode": vscode,
             "launcher": launcher,
+            "approvals": approval_state,
         }
 
     def _handler_class(self):
         service = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "LocalAIBridgeDashboard/0.2"
+            server_version = "LocalAIBridgeDashboard/0.3"
 
             def log_message(self, format: str, *args: Any) -> None:
                 return
@@ -119,6 +128,40 @@ class DashboardService:
                 self._headers(200, "text/html; charset=utf-8", len(body))
                 self.wfile.write(body)
 
+            def _local_host_ok(self) -> bool:
+                raw = self.headers.get("Host", "")
+                host = raw.rsplit(":", 1)[0].strip("[]").casefold() if ":" in raw else raw.casefold()
+                return host in {"127.0.0.1", "localhost"}
+
+            def _mutation_authorized(self) -> bool:
+                if not self._local_host_ok():
+                    return False
+                candidate = self.headers.get("X-Bridge-Dashboard-Token", "")
+                if not candidate or not secrets.compare_digest(candidate, service.approvals.dashboard_token):
+                    return False
+                origin = self.headers.get("Origin")
+                if origin:
+                    expected = "http://" + self.headers.get("Host", "")
+                    if origin.rstrip("/").casefold() != expected.rstrip("/").casefold():
+                        return False
+                return True
+
+            def _read_json_body(self) -> dict[str, Any]:
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except ValueError as exc:
+                    raise ValueError("INVALID_CONTENT_LENGTH") from exc
+                if length < 0 or length > 4096:
+                    raise ValueError("REQUEST_BODY_TOO_LARGE")
+                raw = self.rfile.read(length) if length else b"{}"
+                try:
+                    payload = json.loads(raw.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise ValueError("INVALID_JSON") from exc
+                if not isinstance(payload, dict):
+                    raise ValueError("JSON_OBJECT_REQUIRED")
+                return payload
+
             def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
                 parsed = urlparse(self.path)
                 if parsed.path in {"/", "/index.html"}:
@@ -150,7 +193,47 @@ class DashboardService:
                 if parsed.path == "/api/launcher":
                     self._json(200, service.launcher_state.read())
                     return
+                if parsed.path == "/api/approvals":
+                    self._json(200, service.approvals.list_requests(include_terminal=True, limit=100))
+                    return
+                if parsed.path == "/api/session":
+                    self._json(200, {
+                        "dashboard_token": service.approvals.dashboard_token,
+                        "confirm_writes": service.settings.confirm_writes,
+                        "confirm_commands": service.settings.confirm_commands,
+                        "approval_ttl_seconds": service.settings.approval_ttl_seconds,
+                    })
+                    return
                 self._json(404, {"error": "not_found"})
+
+            def do_POST(self) -> None:  # noqa: N802 - stdlib handler API
+                if not self._mutation_authorized():
+                    self._json(403, {"error": "dashboard_mutation_forbidden"})
+                    return
+                parsed = urlparse(self.path)
+                parts = [part for part in parsed.path.split("/") if part]
+                if len(parts) != 3 or parts[:2] != ["api", "approvals"]:
+                    self._json(404, {"error": "not_found"})
+                    return
+                request_id = parts[2]
+                try:
+                    payload = self._read_json_body()
+                    decision = str(payload.get("decision", ""))
+                    result = service.approvals.decide(request_id, decision)
+                except KeyError as exc:
+                    self._json(404, {"error": str(exc.args[0] if exc.args else "APPROVAL_REQUEST_NOT_FOUND")})
+                    return
+                except (ValueError, RuntimeError) as exc:
+                    self._json(409, {"error": str(exc)})
+                    return
+                service.activity.emit(
+                    "approval_decided",
+                    status=result.get("status", "completed"),
+                    title=f"Approval {result.get('status')}: {result.get('title')}",
+                    component="approvals",
+                    details={"request_id": request_id, "action": result.get("action")},
+                )
+                self._json(200, result)
 
         return Handler
 

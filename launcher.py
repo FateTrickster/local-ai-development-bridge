@@ -141,6 +141,8 @@ def _preflight(args: argparse.Namespace) -> dict[str, Any]:
         "bridge_port": args.bridge_port,
         "dashboard_port": args.dashboard_port,
         "tunnel_enabled": not args.no_tunnel,
+        "confirm_writes": bool(getattr(args, "confirm_writes", False)),
+        "confirm_commands": bool(getattr(args, "confirm_commands", False)),
     }
 
 
@@ -152,6 +154,9 @@ def _server_env(args: argparse.Namespace, public_origin: str | None = None, host
     env["BRIDGE_HOST"] = DEFAULT_BRIDGE_HOST
     env["BRIDGE_PORT"] = str(args.bridge_port)
     env["BRIDGE_DASHBOARD_PORT"] = str(args.dashboard_port)
+    env["BRIDGE_CONFIRM_WRITES"] = "1" if getattr(args, "confirm_writes", False) else "0"
+    env["BRIDGE_CONFIRM_COMMANDS"] = "1" if getattr(args, "confirm_commands", False) else "0"
+    env["BRIDGE_APPROVAL_TTL_SECONDS"] = str(getattr(args, "approval_ttl", 300))
     if hostname:
         env["BRIDGE_ALLOWED_HOSTS"] = hostname
     else:
@@ -212,6 +217,9 @@ def command_start(args: argparse.Namespace) -> int:
             "phase": "preflight",
             "mode": "readonly" if args.readonly else "full",
             "tunnel_enabled": not args.no_tunnel,
+            "confirm_writes": bool(args.confirm_writes),
+            "confirm_commands": bool(args.confirm_commands),
+            "approval_ttl_seconds": int(args.approval_ttl),
             "workspace_root": str(Path(args.workspace).resolve()),
             "bridge": {"host": DEFAULT_BRIDGE_HOST, "port": args.bridge_port},
             "dashboard": {"host": "127.0.0.1", "preferred_port": args.dashboard_port, "url": None},
@@ -366,6 +374,9 @@ def build_parser() -> argparse.ArgumentParser:
     start = sub.add_parser("start", help="Start tunnel, bridge, dashboard and smoke tests")
     add_common(start)
     start.add_argument("--readonly", action="store_true", help="Disable file writes and command execution")
+    start.add_argument("--confirm-writes", action="store_true", help="Require localhost Dashboard approval for write_file/apply_patch")
+    start.add_argument("--confirm-commands", action="store_true", help="Require localhost Dashboard approval before run_command")
+    start.add_argument("--approval-ttl", type=int, default=300, help="Approval request lifetime in seconds (30-3600)")
     start.add_argument("--no-smoke", action="store_true", help="Skip initialize/tools-list smoke checks")
     start.add_argument("--smoke-timeout", type=float, default=25.0)
     start.add_argument("--exit-after-ready", action="store_true", help="Stop all child processes after readiness checks; useful for CI")
@@ -373,7 +384,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = sub.add_parser("doctor", help="Validate local prerequisites without starting services")
     add_common(doctor)
-    doctor.set_defaults(func=command_doctor, readonly=False)
+    doctor.set_defaults(func=command_doctor, readonly=False, confirm_writes=False, confirm_commands=False, approval_ttl=300)
 
     status = sub.add_parser("status", help="Print the last launcher state snapshot")
     status.set_defaults(func=command_status)

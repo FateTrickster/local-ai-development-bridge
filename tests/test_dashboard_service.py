@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 from bridge.activity_service import ActivityService
+from bridge.approval_service import ApprovalService
 from bridge.config import Settings
 from bridge.dashboard_service import DashboardService
 from bridge.launcher_state import LauncherStateStore
@@ -57,9 +59,13 @@ class DashboardServiceTests(unittest.TestCase):
             max_search_bytes=262_144,
             max_directory_entries=500,
             dashboard_port=0,
+            confirm_writes=True,
+            confirm_commands=True,
+            approval_ttl_seconds=120,
         )
         self.activity = ActivityService(root / "activity.jsonl")
         self.tasks = TaskService(root / "todos.json", root / "progress.jsonl")
+        self.approvals = ApprovalService(ttl_seconds=120)
         self.launcher_state = LauncherStateStore(root / "launcher-state.json")
         self.launcher_state.replace(
             {
@@ -86,13 +92,19 @@ class DashboardServiceTests(unittest.TestCase):
             _FakeTerminal(),  # type: ignore[arg-type]
             _FakeVSCode(),  # type: ignore[arg-type]
             self.launcher_state,
+            self.approvals,
         )
 
     def tearDown(self) -> None:
         self.service.stop()
         self.temp.cleanup()
 
-    def test_snapshot_contains_observability_sections(self) -> None:
+    def test_snapshot_contains_observability_and_approval_sections(self) -> None:
+        request = self.approvals.request(
+            "write_file",
+            {"path": "a.txt", "content_sha256": "abc"},
+            title="write a.txt",
+        )
         state = self.service.snapshot()
         self.assertEqual(state["todo_counts"]["in_progress"], 1)
         self.assertEqual(len(state["progress"]["events"]), 1)
@@ -101,27 +113,72 @@ class DashboardServiceTests(unittest.TestCase):
         self.assertEqual(state["vscode"]["provider_state"], "ready")
         self.assertEqual(state["launcher"]["phase"], "ready")
         self.assertTrue(state["launcher"]["tunnel"]["running"])
+        self.assertEqual(state["approvals"]["pending"], 1)
+        self.assertEqual(state["approvals"]["requests"][0]["request_id"], request["request_id"])
+        self.assertTrue(state["system"]["confirm_writes"])
 
-    def test_local_http_dashboard_and_state_api(self) -> None:
+    def _post_decision(self, base: str, request_id: str, token: str, decision: str, *, origin: str | None = None):
+        req = urllib.request.Request(
+            f"{base}/api/approvals/{request_id}",
+            data=json.dumps({"decision": decision}).encode("utf-8"),
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-Bridge-Dashboard-Token": token,
+                **({"Origin": origin} if origin else {}),
+            },
+        )
+        return urllib.request.urlopen(req, timeout=3)
+
+    def test_local_http_dashboard_session_and_approval_decision(self) -> None:
+        request = self.approvals.request(
+            "run_command",
+            {"command": "echo test", "cwd": "."},
+            title="run command",
+        )
         started = self.service.start()
         self.assertTrue(started["enabled"])
-        self.assertIsNotNone(started["port"])
         base = started["url"].rstrip("/")
         with urllib.request.urlopen(base + "/", timeout=3) as response:
             html = response.read().decode("utf-8")
             self.assertEqual(response.status, 200)
-            self.assertIn("Local AI Development Bridge", html)
-            self.assertIn("Quick Tunnel", html)
-            self.assertIn("Launcher / Tunnel State", html)
+            self.assertIn("Local Approval Queue", html)
+            self.assertIn("批准一次", html)
+        with urllib.request.urlopen(base + "/api/session", timeout=3) as response:
+            session = json.loads(response.read().decode("utf-8"))
+            token = session["dashboard_token"]
+            self.assertTrue(session["confirm_writes"])
         with urllib.request.urlopen(base + "/api/state", timeout=3) as response:
             payload = json.loads(response.read().decode("utf-8"))
-            self.assertEqual(response.status, 200)
-            self.assertEqual(payload["task"]["todos"][0]["id"], "a")
-            self.assertEqual(payload["system"]["dashboard_host"], "127.0.0.1")
-            self.assertEqual(payload["launcher"]["status"], "ready")
-        with urllib.request.urlopen(base + "/api/launcher", timeout=3) as response:
+            self.assertEqual(payload["approvals"]["pending"], 1)
+        with self._post_decision(base, request["request_id"], token, "approve", origin=base) as response:
             payload = json.loads(response.read().decode("utf-8"))
-            self.assertEqual(payload["tunnel"]["hostname"], "dashboard-test.trycloudflare.com")
+            self.assertEqual(payload["status"], "approved")
+        self.assertEqual(self.approvals.list_requests()["approved"], 1)
+
+    def test_approval_post_rejects_missing_token_and_cross_origin(self) -> None:
+        request = self.approvals.request(
+            "write_file",
+            {"path": "a.txt"},
+            title="write",
+        )
+        started = self.service.start()
+        base = started["url"].rstrip("/")
+        bad = urllib.request.Request(
+            f"{base}/api/approvals/{request['request_id']}",
+            data=b'{"decision":"approve"}',
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with self.assertRaises(urllib.error.HTTPError) as missing:
+            urllib.request.urlopen(bad, timeout=3)
+        self.assertEqual(missing.exception.code, 403)
+        with urllib.request.urlopen(base + "/api/session", timeout=3) as response:
+            token = json.loads(response.read().decode("utf-8"))["dashboard_token"]
+        with self.assertRaises(urllib.error.HTTPError) as cross:
+            self._post_decision(base, request["request_id"], token, "approve", origin="http://evil.example")
+        self.assertEqual(cross.exception.code, 403)
+        self.assertEqual(self.approvals.list_requests()["pending"], 1)
 
 
 if __name__ == "__main__":

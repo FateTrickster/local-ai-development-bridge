@@ -133,8 +133,21 @@
 后续：
 
 - 多工作区；
-- 权限确认 UI；
+- 权限确认 UI（已完成：localhost-only 一次性审批门控）；
 - 更细的进程树/资源使用统计。
+
+
+## P2.4：本机权限确认 UI（已完成）
+
+- `ApprovalService`：pending / approved / denied / expired / consumed 生命周期；
+- 动作 + 完整参数 SHA-256 fingerprint 绑定；
+- 单次消费 + TTL；
+- `write_file` / `apply_patch` / `run_command` 可选审批门控；
+- Dashboard 待审批队列、批准一次/拒绝；
+- localhost-only POST + 独立 Dashboard session token + Origin 校验；
+- Launcher `--confirm-writes` / `--confirm-commands`；
+- Activity 显示 approval_requested / approval_decided / approval_consumed；
+- 默认关闭，保持已有自动化客户端兼容。
 
 ## E2E
 

@@ -422,3 +422,46 @@ Windows 专项终端测试开启 `ResourceWarning` 后，5/5 通过且不再输�
 Linux/macOS 后端最终以 GitHub Actions 云端 matrix 结果作为验收依据。
 
 下一阶段：多工作区模型与权限确认 UI。
+
+
+## 12. P5 本机权限确认 UI 实施结果（2026-10-09）
+
+为了进一步降低“AI 已经开始执行，但用户不知道也无法介入”的黑匣子风险，本阶段增加可选的人类审批门控。
+
+### 12.1 审批模型
+
+新增 `bridge/approval_service.py`。每个请求具有 `pending -> approved/denied/expired -> consumed` 生命周期。批准不保存真实操作内容，而是对 `action + canonical payload` 计算 SHA-256 fingerprint；Dashboard 只展示脱敏后的 path、command preview、字节数等摘要。批准与完整参数绑定，如果客户端在批准后改变命令、文件内容、expected version 或其他参数，会返回 `APPROVAL_FINGERPRINT_MISMATCH`。批准只能使用一次，并受 TTL 约束。
+
+### 12.2 工具门控
+
+可通过 `BRIDGE_CONFIRM_WRITES=1` 与 `BRIDGE_CONFIRM_COMMANDS=1` 开启，也可在 launcher 使用 `--confirm-writes --confirm-commands`。当前覆盖：
+
+- `write_file`；
+- `apply_patch`；
+- `run_command`。
+
+第一次调用返回 `approval_required=true`；用户在本机 Dashboard 批准后，客户端以完全相同参数加 `approval_id=request_id` 重试才实际执行。默认关闭，因此不破坏现有自动化客户端。
+
+### 12.3 Dashboard 安全边界
+
+Dashboard 保持绑定 `127.0.0.1` 且不经过 Quick Tunnel。新增的 approve/deny POST：
+
+- 要求 `X-Bridge-Dashboard-Token` 独立 ephemeral session token；
+- session token 只能从 localhost Dashboard 同源 GET 获取；
+- 校验 Host 只能是 `127.0.0.1/localhost`；
+- 浏览器携带 Origin 时要求严格同源；
+- mutation 仅限审批状态，不提供直接文件写入或命令执行 HTTP API。
+
+### 12.4 可视化
+
+Dashboard 增加“待审批”摘要卡和“审批”页，可以看到 pending/approved/denied/consumed 状态，并进行“批准一次/拒绝”。Activity Timeline 同时记录 `approval_requested`、`approval_decided`、`approval_consumed`。
+
+本地验证：
+
+- Python tests：61/61 通过；
+- ApprovalService 生命周期、fingerprint、one-time、expiry、redaction 测试通过；
+- Dashboard 缺少 session token 与 cross-origin POST 均返回 403；
+- 真实 MCP E2E：`write_file -> approve -> retry`、`apply_patch -> approve -> retry`、`run_command -> approve -> retry` 全链路通过；
+- Secret Scan、TypeScript compile、Dashboard JS syntax 均通过。
+
+下一阶段：多工作区模型。建议不要把多个 root 硬塞进现有 path 字符串，而是引入显式 `workspace_id` / workspace registry，使权限、Activity、审批与 VS Code workspace 都能够按 workspace 归属。
