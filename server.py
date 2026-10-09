@@ -12,6 +12,7 @@ from bridge.activity_service import ActivityService, redact_text
 from bridge.approval_service import ApprovalService
 from bridge.config import Settings
 from bridge.dashboard_service import DashboardService
+from bridge.desktop_notification import DesktopNotificationService
 from bridge.security import build_secure_mcp_app
 from bridge.task_service import TaskService
 from bridge.workspace_registry import WorkspaceRegistry
@@ -24,6 +25,7 @@ activity = ActivityService()
 approvals = ApprovalService(ttl_seconds=settings.approval_ttl_seconds)
 registry = WorkspaceRegistry.from_env(settings, activity=activity)
 tasks = TaskService()
+desktop_notifications = DesktopNotificationService(enabled=settings.desktop_notifications_enabled)
 dashboard = DashboardService(settings, activity, tasks, registry, approvals=approvals)
 
 if settings.allowed_hosts or settings.allowed_origins:
@@ -528,6 +530,31 @@ def set_todos(todos: list[dict[str, Any]]) -> dict[str, Any]:
         component="tasks",
         details={"version": result.get("version"), "todos": result.get("todos", [])},
     )
+    notification = desktop_notifications.evaluate_task_completion(result)
+    if notification.get("notified"):
+        activity.emit(
+            "desktop_notification",
+            status="completed",
+            title="Task completion popup launched",
+            component="notifications",
+            details={
+                "task_version": result.get("version"),
+                "backend": notification.get("backend"),
+                "reason": notification.get("reason"),
+            },
+        )
+    elif notification.get("reason") not in {"TASKS_STILL_ACTIVE", "NO_TASKS", "ALREADY_NOTIFIED"}:
+        activity.emit(
+            "desktop_notification",
+            status="skipped",
+            title="Task completion popup not launched",
+            component="notifications",
+            details={
+                "task_version": result.get("version"),
+                "reason": notification.get("reason"),
+                "backend": notification.get("backend"),
+            },
+        )
     return result
 
 

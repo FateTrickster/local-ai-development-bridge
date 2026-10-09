@@ -6,6 +6,7 @@ All notable changes to this project will be documented here.
 
 ### Added
 
+- Program-level desktop completion popup with persistent de-duplication; Windows uses a detached WinForms MessageBox and can be disabled with `BRIDGE_DESKTOP_NOTIFICATIONS=0`.
 - Focused default Dashboard with AI output 1-minute/5-minute windows and TPS telemetry, hierarchical stage timing, task-tree highlighting, and file-change paths.
 - Preserved the previous full observability/control UI as `dashboard/advanced.html`.
 - Hierarchical TaskService state with `parent_id`, active-path timing, persistent start/completion timestamps, and deepest-active-leaf selection.
