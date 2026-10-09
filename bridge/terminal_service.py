@@ -60,10 +60,12 @@ class TerminalService:
         settings: Settings,
         guard: WorkspaceGuard,
         activity: ActivityService | None = None,
+        workspace_id: str = "default",
     ):
         self.settings = settings
         self.guard = guard
         self.activity = activity
+        self.workspace_id = str(workspace_id or "default")
         self._commands: dict[str, CommandRecord] = {}
         self._registry_lock = threading.RLock()
 
@@ -116,6 +118,7 @@ class TerminalService:
                 title=f"Command {record.status}",
                 component="terminal",
                 details={
+                    "workspace_id": self.workspace_id,
                     "command_id": record.command_id,
                     "command_preview": redact_text(record.command, 240),
                     "cwd": record.cwd,
@@ -126,19 +129,7 @@ class TerminalService:
 
     @staticmethod
     def _close_process(process: Any) -> None:
-        """Close a PTY and wait briefly for pywinpty's internal socket reader.
-
-        pywinpty uses a private localhost socket pair and a daemon reader thread.
-        `PtyProcess.close()` closes the server/accepted socket, but without joining
-        that internal thread the client socket can survive until GC and emit
-        ResourceWarning. Joining it after close gives the thread time to execute
-        its own `client.close()` before the process object is released.
-        """
-        # pywinpty 2.0.x sets `PtyProcess.closed=True` inside `isalive()` as soon
-        # as the child exits. `wait()` calls `isalive()`, so a subsequent
-        # `PtyProcess.close()` can become a no-op and leave its localhost socket
-        # pair open. Close both Python socket objects unconditionally before
-        # delegating to the library close method. Socket.close() is idempotent.
+        """Close PTY resources and wait briefly for backend reader cleanup."""
         for attribute in ("fileobj", "_server"):
             socket_object = getattr(process, attribute, None)
             if socket_object is not None:
@@ -255,6 +246,7 @@ class TerminalService:
                 title="Command started",
                 component="terminal",
                 details={
+                    "workspace_id": self.workspace_id,
                     "command_id": command_id,
                     "command_preview": redact_text(command, 240),
                     "cwd": record.cwd,
@@ -276,7 +268,7 @@ class TerminalService:
                 if record.status == "running":
                     record.condition.wait_for(lambda: record.status != "running", timeout=timeout_ms / 1000)
         result = self.get_command_output(command_id, offset=0, max_bytes=_DEFAULT_READ_BYTES)
-        result.update({"command_id": command_id, "cwd": record.cwd, "background": background})
+        result.update({"workspace_id": self.workspace_id, "command_id": command_id, "cwd": record.cwd, "background": background})
         return result
 
     def get_command_output(self, command_id: str, offset: int = 0, max_bytes: int = _DEFAULT_READ_BYTES) -> dict[str, Any]:
@@ -290,6 +282,7 @@ class TerminalService:
             chunk = bytes(record.buffer[local_start : local_start + max_bytes])
             next_offset = start + len(chunk)
             return {
+                "workspace_id": self.workspace_id,
                 "command_id": command_id,
                 "status": record.status,
                 "exit_code": record.exit_code,
@@ -315,6 +308,7 @@ class TerminalService:
                 tail = bytes(record.buffer[-tail_bytes:]) if tail_bytes else b""
                 commands.append(
                     {
+                        "workspace_id": self.workspace_id,
                         "command_id": record.command_id,
                         "command_preview": redact_text(record.command, 240),
                         "cwd": record.cwd,
@@ -326,7 +320,7 @@ class TerminalService:
                         "output_lost": record.earliest_offset > 0,
                     }
                 )
-        return {"commands": commands, "total_tracked": len(self._commands)}
+        return {"workspace_id": self.workspace_id, "commands": commands, "total_tracked": len(self._commands)}
 
     def send_command_input(self, command_id: str, input: str, append_newline: bool = True) -> dict[str, Any]:
         self._require_commands()
@@ -339,7 +333,7 @@ class TerminalService:
             record.input_seq += 1
             seq = record.input_seq
             record.condition.notify_all()
-        return {"command_id": command_id, "input_seq": seq, "status": record.status}
+        return {"workspace_id": self.workspace_id, "command_id": command_id, "input_seq": seq, "status": record.status}
 
     def wait(self, command_id: str, timeout_ms: int = 30_000) -> dict[str, Any]:
         record = self._record(command_id)
@@ -352,6 +346,7 @@ class TerminalService:
                     timeout=timeout_ms / 1000,
                 )
             return {
+                "workspace_id": self.workspace_id,
                 "command_id": command_id,
                 "status": record.status,
                 "exit_code": record.exit_code,
@@ -389,7 +384,12 @@ class TerminalService:
             remaining = max(0.0, deadline - time.monotonic())
             thread.join(timeout=remaining)
         lingering = sum(1 for record in records if record.reader_thread is not None and record.reader_thread.is_alive())
-        return {"tracked": len(records), "running_terminated": running, "lingering_reader_threads": lingering}
+        return {
+            "workspace_id": self.workspace_id,
+            "tracked": len(records),
+            "running_terminated": running,
+            "lingering_reader_threads": lingering,
+        }
 
     def terminate(self, command_id: str, force: bool = False) -> dict[str, Any]:
         self._require_commands()
@@ -403,4 +403,4 @@ class TerminalService:
                         record.process.terminate(force=False)
                 finally:
                     record.condition.notify_all()
-        return {"command_id": command_id, "status": record.status}
+        return {"workspace_id": self.workspace_id, "command_id": command_id, "status": record.status}

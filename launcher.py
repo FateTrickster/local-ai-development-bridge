@@ -16,13 +16,14 @@ from typing import Any
 from bridge.launcher_state import LauncherStateStore
 from bridge.security import get_or_create_token
 from bridge.tunnel_manager import CloudflareQuickTunnel, discover_cloudflared
+from bridge.workspace_registry import parse_extra_workspaces
 
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_BRIDGE_HOST = "127.0.0.1"
 DEFAULT_BRIDGE_PORT = 8000
 DEFAULT_DASHBOARD_PORT = 8766
-REQUIRED_TOOLS = {"workspace_info", "list_directory", "read_file", "get_activity", "dashboard_info"}
+REQUIRED_TOOLS = {"list_workspaces", "workspace_info", "list_directory", "read_file", "get_activity", "dashboard_info"}
 
 
 def _print(message: str) -> None:
@@ -40,6 +41,35 @@ def _merge_csv(raw: str | None, *values: str) -> str:
         if value and value not in items:
             items.append(value)
     return ",".join(items)
+
+
+def _extra_workspace_specs(args: argparse.Namespace) -> list[dict[str, str]]:
+    raw_items = list(getattr(args, "extra_workspace", None) or [])
+    specs: list[dict[str, str]] = []
+    for raw in raw_items:
+        value = str(raw).strip()
+        if "=" not in value:
+            raise ValueError(f"INVALID_EXTRA_WORKSPACE: {value!r}; expected ID=PATH")
+        workspace_id, workspace_path = value.split("=", 1)
+        workspace_id = workspace_id.strip()
+        workspace_path = workspace_path.strip()
+        if not workspace_id or not workspace_path:
+            raise ValueError(f"INVALID_EXTRA_WORKSPACE: {value!r}; expected ID=PATH")
+        specs.append({"id": workspace_id, "name": workspace_id, "path": workspace_path})
+    normalized = parse_extra_workspaces(json.dumps(specs, ensure_ascii=False))
+    default_root = Path(args.workspace).expanduser().resolve()
+    for item in normalized:
+        candidate = Path(item["path"]).resolve()
+        try:
+            common = Path(os.path.commonpath([str(default_root), str(candidate)])).resolve()
+        except ValueError:
+            common = None
+        if common is not None and os.path.normcase(str(common)) in {
+            os.path.normcase(str(default_root)),
+            os.path.normcase(str(candidate)),
+        }:
+            raise ValueError(f"OVERLAPPING_WORKSPACE_ROOT: {item['path']}")
+    return normalized
 
 
 def _port_available(host: str, port: int) -> bool:
@@ -133,11 +163,14 @@ def _preflight(args: argparse.Namespace) -> dict[str, Any]:
         import uvicorn  # noqa: F401
     except ImportError as exc:
         raise RuntimeError(f"PYTHON_DEPENDENCY_MISSING: {exc}") from exc
+    extra_workspaces = _extra_workspace_specs(args)
     return {
         "python": sys.executable,
         "python_version": ".".join(str(item) for item in sys.version_info[:3]),
         "cloudflared": cloudflared,
         "workspace_root": str(Path(args.workspace).resolve()),
+        "extra_workspaces": extra_workspaces,
+        "workspace_count": 1 + len(extra_workspaces),
         "bridge_port": args.bridge_port,
         "dashboard_port": args.dashboard_port,
         "tunnel_enabled": not args.no_tunnel,
@@ -149,6 +182,11 @@ def _preflight(args: argparse.Namespace) -> dict[str, Any]:
 def _server_env(args: argparse.Namespace, public_origin: str | None = None, hostname: str | None = None) -> dict[str, str]:
     env = os.environ.copy()
     env["WORKSPACE_ROOT"] = str(Path(args.workspace).resolve())
+    extra_workspaces = _extra_workspace_specs(args)
+    if extra_workspaces:
+        env["BRIDGE_WORKSPACES_JSON"] = json.dumps(extra_workspaces, ensure_ascii=False, separators=(",", ":"))
+    else:
+        env.pop("BRIDGE_WORKSPACES_JSON", None)
     env["ALLOW_WRITE"] = "0" if args.readonly else "1"
     env["ALLOW_COMMANDS"] = "0" if args.readonly else "1"
     env["BRIDGE_HOST"] = DEFAULT_BRIDGE_HOST
@@ -221,6 +259,7 @@ def command_start(args: argparse.Namespace) -> int:
             "confirm_commands": bool(args.confirm_commands),
             "approval_ttl_seconds": int(args.approval_ttl),
             "workspace_root": str(Path(args.workspace).resolve()),
+            "workspaces": {"default": str(Path(args.workspace).resolve()), "extra": _extra_workspace_specs(args)},
             "bridge": {"host": DEFAULT_BRIDGE_HOST, "port": args.bridge_port},
             "dashboard": {"host": "127.0.0.1", "preferred_port": args.dashboard_port, "url": None},
             "tunnel": {"provider": "cloudflare-quick", "running": False, "public_origin": None, "hostname": None},
@@ -364,7 +403,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_common(target: argparse.ArgumentParser) -> None:
-        target.add_argument("--workspace", default=str(ROOT.parent), help="Workspace root exposed through MCP")
+        target.add_argument("--workspace", default=str(ROOT.parent), help="Default workspace root exposed through MCP")
+        target.add_argument("--extra-workspace", action="append", default=[], metavar="ID=PATH", help="Add an explicit extra workspace; may be repeated")
         target.add_argument("--bridge-port", type=int, default=int(os.environ.get("BRIDGE_PORT", DEFAULT_BRIDGE_PORT)))
         target.add_argument("--dashboard-port", type=int, default=int(os.environ.get("BRIDGE_DASHBOARD_PORT", DEFAULT_DASHBOARD_PORT)))
         target.add_argument("--cloudflared", default=os.environ.get("CLOUDFLARED_PATH") or None)

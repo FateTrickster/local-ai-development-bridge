@@ -132,7 +132,7 @@
 
 后续：
 
-- 多工作区；
+- 多工作区（已完成：显式 `workspace_id` / `WorkspaceRegistry`）；
 - 权限确认 UI（已完成：localhost-only 一次性审批门控）；
 - 更细的进程树/资源使用统计。
 
@@ -148,6 +148,20 @@
 - Launcher `--confirm-writes` / `--confirm-commands`；
 - Activity 显示 approval_requested / approval_decided / approval_consumed；
 - 默认关闭，保持已有自动化客户端兼容。
+
+## P2.5：显式多工作区模型（已完成）
+
+- `WorkspaceRegistry` 与显式 `workspace_id`；
+- `default` 工作区保持原 `WORKSPACE_ROOT` 向后兼容；
+- 文件、搜索、Patch、PTY、VS Code 工具按 workspace context 执行；
+- 每个工作区独立 `WorkspaceGuard`，禁止跨 root 路径逃逸；
+- PTY command_id 自动路由到所属 workspace；
+- Activity / Dashboard / approvals 携带 workspace 归属；
+- Dashboard 工作区页与聚合终端/VS Code 状态；
+- Launcher `--extra-workspace ID=PATH` 与 `BRIDGE_WORKSPACES_JSON`；
+- 多工作区 MCP + Dashboard E2E smoke。
+
+下一步：工作区级权限策略、进程树/CPU/内存统计，以及更细的 Dashboard 过滤与检索。
 
 ## E2E
 
