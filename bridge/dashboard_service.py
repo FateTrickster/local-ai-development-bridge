@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .activity_service import ActivityService
 from .config import Settings
+from .launcher_state import LauncherStateStore
 from .task_service import TaskService
 from .terminal_service import TerminalService
 from .vscode_service import VSCodeService
@@ -33,12 +34,14 @@ class DashboardService:
         tasks: TaskService,
         terminal: TerminalService,
         vscode: VSCodeService,
+        launcher_state: LauncherStateStore | None = None,
     ):
         self.settings = settings
         self.activity = activity
         self.tasks = tasks
         self.terminal = terminal
         self.vscode = vscode
+        self.launcher_state = launcher_state or LauncherStateStore()
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self.port: int | None = None
@@ -49,6 +52,7 @@ class DashboardService:
         activity = self.activity.list_events(limit=200)
         commands = self.terminal.list_commands(limit=20, tail_bytes=4096)
         vscode = self.vscode.health()
+        launcher = self.launcher_state.read()
         todos = task_state.get("todos", []) if isinstance(task_state.get("todos"), list) else []
         counts = {
             "pending": sum(1 for item in todos if isinstance(item, dict) and item.get("status") == "pending"),
@@ -71,13 +75,14 @@ class DashboardService:
             "activity": activity,
             "commands": commands,
             "vscode": vscode,
+            "launcher": launcher,
         }
 
     def _handler_class(self):
         service = self
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "LocalAIBridgeDashboard/0.1"
+            server_version = "LocalAIBridgeDashboard/0.2"
 
             def log_message(self, format: str, *args: Any) -> None:
                 return
@@ -137,6 +142,9 @@ class DashboardService:
                         self._json(400, {"error": "INVALID_QUERY"})
                         return
                     self._json(200, service.tasks.get_progress_events(limit=limit, after_seq=after_seq))
+                    return
+                if parsed.path == "/api/launcher":
+                    self._json(200, service.launcher_state.read())
                     return
                 self._json(404, {"error": "not_found"})
 

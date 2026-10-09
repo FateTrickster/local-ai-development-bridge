@@ -279,10 +279,10 @@ P0 完成时必须满足：
 
 本轮已经完成第一版可观察性实践优化：
 
-- 新增 ridge/activity_service.py，建立统一结构化 Activity/Event 日志与敏感信息脱敏。
-- TaskService 新增具体 progress event 查询和 fter_seq 增量读取。
+- 新增 `bridge/activity_service.py`，建立统一结构化 Activity/Event 日志与敏感信息脱敏。
+- TaskService 新增具体 progress event 查询和 `after_seq` 增量读取。
 - TerminalService 新增命令快照，并自动记录 command started/completed/failed。
-- 新增 ridge/dashboard_service.py 与 dashboard/index.html，Dashboard 固定绑定 127.0.0.1、只读、与公网 MCP Tunnel 分离。
+- 新增 `bridge/dashboard_service.py` 与 dashboard/index.html，Dashboard 固定绑定 127.0.0.1、只读、与公网 MCP Tunnel 分离。
 - server.py 将核心文件、搜索、修改、终端、任务和 VS Code 工具接入 Activity lifecycle。
 - 新增 MCP 工具：get_activity、get_progress_events、dashboard_info。
 - Dashboard 可以显示 todo、进度记录、Activity Timeline、终端命令快照、Bridge 权限与 VS Code Companion 状态。
@@ -298,3 +298,33 @@ P0 完成时必须满足：
 
 仍保留的已知工程债：pywinpty 测试过程仍有 ResourceWarning: unclosed socket，不影响当前 31 项测试通过，但列入后续稳定性优化。
 
+
+
+## 8. P1 一键启动与 Tunnel Manager 实施结果（2026-10-09）
+
+P1 已完成第一版产品化启动链：
+
+- 新增 `bridge/tunnel_manager.py`，自动发现 cloudflared、创建 Quick Tunnel、解析真实公网域名并监督进程生命周期。
+- 修复 Quick Tunnel URL 解析边界：明确排除 `api.trycloudflare.com`，避免把 Cloudflare API 请求地址误判为实际 Tunnel。
+- 新增 `launcher.py`：提供 `start`、`doctor`、`status` 三类入口。
+- 新增 `start.cmd` 与 `start-readonly-all.cmd`，普通用户不再需要手工协调 server / cloudflared / Host allowlist。
+- Launcher 只把当前真实 Tunnel hostname 写入 `BRIDGE_ALLOWED_HOSTS`，清除历史 stale Quick Tunnel host，继续保持 DNS rebinding protection。
+- Launcher 自动启动 Bridge + Dashboard，执行本地与公网 `initialize -> tools/list` smoke test。
+- 新增 `bridge/launcher_state.py`，把非敏感启动状态持久化到 `.runtime/launcher-state.json`。
+- Dashboard 新增 Quick Tunnel 卡片和 Launcher / Tunnel 状态页，可查看启动阶段、public origin、进程和 local/public smoke 结果。
+- Launcher 退出时统一回收 Bridge 与 cloudflared 子进程。
+
+验证结果：
+
+- Python tests：40/40 通过。
+- Python compileall：通过。
+- Local-only launcher E2E：通过。
+- 真实 Quick Tunnel E2E：通过。
+- Cloudflare edge 注册：通过。
+- Local MCP initialize/tools-list：23 tools，通过。
+- Public MCP initialize/tools-list：23 tools，通过。
+- 精确 Tunnel Host allowlist：通过；未继续继承旧 Quick Tunnel hostname。
+
+P1 验证过程中发现并修复了一个真实缺陷：最初的 URL 正则会从 cloudflared 错误日志中把 `https://api.trycloudflare.com` 误识别成 Quick Tunnel origin。修复后仅接受实际生成的 Quick Tunnel hostname，并重新完成真实公网 E2E。
+
+下一阶段进入 P2：GitHub CI / Release / VSIX 分发自动化。

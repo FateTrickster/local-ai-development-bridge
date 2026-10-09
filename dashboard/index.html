@@ -22,7 +22,7 @@
     .title p { color:var(--muted); margin-top:5px; }
     .live { display:flex; align-items:center; gap:8px; white-space:nowrap; color:var(--muted); }
     .dot { width:9px; height:9px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 14%,transparent); }
-    .grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+    .grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; }
     .card,.panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; }
     .card { padding:13px 14px; min-height:82px; }
     .card .label { color:var(--muted); font-size:12px; }
@@ -86,6 +86,7 @@
     <div class="card"><div class="label">Bridge</div><div class="value" id="bridge-state">—</div><div class="sub" id="bridge-address">—</div></div>
     <div class="card"><div class="label">VS Code Companion</div><div class="value" id="vscode-state">—</div><div class="sub" id="vscode-detail">—</div></div>
     <div class="card"><div class="label">终端</div><div class="value" id="terminal-state">—</div><div class="sub" id="terminal-detail">—</div></div>
+    <div class="card"><div class="label">Quick Tunnel</div><div class="value" id="tunnel-state">—</div><div class="sub" id="tunnel-detail">—</div></div>
   </section>
 
   <section class="panel task">
@@ -99,6 +100,7 @@
     <button type="button" data-tab="progress">进度记录</button>
     <button type="button" data-tab="terminal">终端</button>
     <button type="button" data-tab="system">系统状态</button>
+    <button type="button" data-tab="startup">启动状态</button>
   </nav>
 
   <section class="panel" data-panel="activity">
@@ -119,6 +121,11 @@
   <section class="panel" data-panel="system" hidden>
     <div class="panel-head"><h2>System State</h2><span class="muted">只读</span></div>
     <div class="system" id="system-grid"></div>
+  </section>
+
+  <section class="panel" data-panel="startup" hidden>
+    <div class="panel-head"><h2>Launcher / Tunnel State</h2><span class="muted">不包含 capability token</span></div>
+    <pre id="launcher-json">尚未由一键启动器管理。</pre>
   </section>
 </main>
 <script>
@@ -208,13 +215,19 @@
     });
   }
   function renderSystem(state) {
-    const s=state.system||{}; const v=state.vscode||{};
+    const s=state.system||{}; const v=state.vscode||{}; const l=state.launcher||{}; const t=l.tunnel||{};
     setText('bridge-state','Online'); setText('bridge-address',`${s.bridge_host||'127.0.0.1'}:${s.bridge_port||'—'}`);
     const vsReady=v.provider_state==='ready'; setText('vscode-state',vsReady?'Ready':'Not ready'); setText('vscode-detail',v.provider_state_reason||'—');
+    const tunnelEnabled=l.tunnel_enabled!==false && (l.managed_by_launcher || t.provider);
+    setText('tunnel-state', t.running?'Online':(tunnelEnabled?'Offline':'Disabled'));
+    setText('tunnel-detail', t.public_origin||l.phase||'未由 launcher 管理');
+    setText('launcher-json', JSON.stringify(l,null,2));
+    const localSmoke=l.smoke&&l.smoke.local?l.smoke.local.status:'—'; const publicSmoke=l.smoke&&l.smoke.public?l.smoke.public.status:'—';
     const items=[
       ['Workspace',s.workspace_root],['Write permission',s.allow_write?'Enabled':'Disabled'],['Command permission',s.allow_commands?'Enabled':'Disabled'],
       ['Bridge',`${s.bridge_host}:${s.bridge_port}`],['Dashboard',`127.0.0.1:${s.dashboard_port||'—'}`],['VS Code',v.provider_state||'unknown'],
-      ['VS Code reason',v.provider_state_reason||'—'],['Open documents',Array.isArray(v.open_documents)?v.open_documents.length:0]
+      ['VS Code reason',v.provider_state_reason||'—'],['Open documents',Array.isArray(v.open_documents)?v.open_documents.length:0],
+      ['Launcher status',l.status||'not_managed'],['Launcher phase',l.phase||'idle'],['Tunnel',t.public_origin||'—'],['Local smoke',localSmoke],['Public smoke',publicSmoke]
     ];
     const host=$('system-grid'); host.replaceChildren(); items.forEach(([k,val])=>{const row=document.createElement('div');row.className='row';const a=document.createElement('span');a.className='muted';a.textContent=k;const b=document.createElement('span');b.textContent=escText(val);row.append(a,b);host.append(row);});
   }

@@ -31,7 +31,49 @@ python -m venv .venv
 
 如需通过 Cloudflare Quick Tunnel 从公网连接，还需要提前安装 `cloudflared`。不使用公网 Tunnel 时，可直接在本机 MCP 客户端中使用 `127.0.0.1` 地址。
 
-## 启动
+## 推荐：一键启动
+
+P1 已加入一键启动器。Windows 用户在完成 Python 依赖与 `cloudflared` 安装后，推荐直接运行：
+
+```bat
+start.cmd
+```
+
+启动器会按顺序完成：
+
+1. 检查 Python、依赖、端口与 `cloudflared`；
+2. 创建 Cloudflare Quick Tunnel；
+3. 从 cloudflared 日志提取真实 `trycloudflare.com` 域名；
+4. 仅把本次真实 Tunnel hostname 注入 DNS rebinding Host 白名单；
+5. 启动 MCP Bridge 与 localhost-only Dashboard；
+6. 执行本地 `initialize -> tools/list` smoke test；
+7. 执行公网 `initialize -> tools/list` smoke test；
+8. 输出实际 Dashboard、Local MCP 和 Public MCP 地址；
+9. 在 `Ctrl+C` 或子进程异常时统一回收 Bridge / cloudflared。
+
+只读一键模式：
+
+```bat
+start-readonly-all.cmd
+```
+
+只做环境检查：
+
+```bat
+doctor.cmd
+```
+
+查看最近一次 launcher 状态：
+
+```bat
+status.cmd
+```
+
+Launcher 状态持久化到 `.runtime/launcher-state.json`，其中不保存 capability token 或完整 capability URL。Dashboard 会显示当前启动阶段、Tunnel 状态及 local/public smoke 结果。
+
+## 手动启动
+
+下面的脚本保留用于调试、离线或手工控制场景。
 
 只读模式：
 
@@ -54,9 +96,9 @@ Observability dashboard: http://127.0.0.1:8766/ (localhost-only, read-only)
 
 `<capability-token>` 是访问凭据，不要提交到 Git，也不要公开分享。Dashboard 默认使用单独的 localhost 端口，不通过 MCP Quick Tunnel 暴露。
 
-## 公网连接
+## 手动公网连接
 
-另开终端执行：
+如果不使用一键启动器，可另开终端执行：
 
 ```bat
 start-tunnel.cmd
@@ -146,6 +188,7 @@ version: sha256:...
 - `.runtime/todos.json`：当前持久任务快照；
 - `.runtime/progress.jsonl`：用户可读的进度事件；
 - `.runtime/activity.jsonl`：结构化工具、终端、文件和系统状态事件，写入前会执行敏感信息脱敏；
+- `.runtime/launcher-state.json`：一键启动器的阶段、Tunnel、进程和 smoke 状态；不会保存 capability token；
 - `.audit/requests.jsonl`：HTTP 安全审计日志，已被 `.gitignore` 排除；
 - PTY 单命令输出缓冲默认最多 4 MiB，并使用绝对 UTF-8 字节 offset 增量读取。
 
@@ -166,7 +209,8 @@ Dashboard 当前显示：
 - `progress.jsonl` 中的具体进度事件；
 - 当前/最近 PTY 命令、状态、耗时和脱敏后的输出尾部；
 - Bridge 工作区与权限；
-- VS Code Companion ready/not_ready 状态。
+- VS Code Companion ready/not_ready 状态；
+- Launcher 当前阶段、Quick Tunnel 公网 origin、local/public smoke test 结果。
 
 Dashboard 只提供 GET 只读接口，固定绑定 `127.0.0.1`，与公网 MCP Tunnel 分离。MCP 另外提供：
 
@@ -196,7 +240,7 @@ Companion 只监听 `127.0.0.1`，并使用本机持久 Token 保护 Bridge → 
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-当前路线见 `ROADMAP.md`，本轮完整优化审查见 `OPTIMIZATION_PLAN.md`。下一重点是把 server、Quick Tunnel、动态 Host 白名单、VS Code Companion 检查和 smoke test 收敛为一键启动流程，并补 GitHub CI / Release。
+当前路线见 `ROADMAP.md`，本轮完整优化审查见 `OPTIMIZATION_PLAN.md`。P1 一键启动与 Tunnel Manager 已完成真实公网 E2E 验证；下一重点是 GitHub CI / Release / VSIX 分发自动化。
 
 ## License
 

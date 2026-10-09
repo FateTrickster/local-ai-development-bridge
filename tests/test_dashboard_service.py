@@ -9,6 +9,7 @@ from pathlib import Path
 from bridge.activity_service import ActivityService
 from bridge.config import Settings
 from bridge.dashboard_service import DashboardService
+from bridge.launcher_state import LauncherStateStore
 from bridge.task_service import TaskService
 
 
@@ -59,6 +60,22 @@ class DashboardServiceTests(unittest.TestCase):
         )
         self.activity = ActivityService(root / "activity.jsonl")
         self.tasks = TaskService(root / "todos.json", root / "progress.jsonl")
+        self.launcher_state = LauncherStateStore(root / "launcher-state.json")
+        self.launcher_state.replace(
+            {
+                "status": "ready",
+                "phase": "ready",
+                "managed_by_launcher": True,
+                "tunnel_enabled": True,
+                "tunnel": {
+                    "provider": "cloudflare-quick",
+                    "running": True,
+                    "public_origin": "https://dashboard-test.trycloudflare.com",
+                    "hostname": "dashboard-test.trycloudflare.com",
+                },
+                "smoke": {"local": {"status": "passed"}, "public": {"status": "passed"}},
+            }
+        )
         self.tasks.set_todos([{"id": "a", "content": "dashboard test", "status": "in_progress"}])
         self.tasks.report_progress("working", current=1, total=2)
         self.activity.emit("test", status="completed", title="dashboard event")
@@ -68,6 +85,7 @@ class DashboardServiceTests(unittest.TestCase):
             self.tasks,
             _FakeTerminal(),  # type: ignore[arg-type]
             _FakeVSCode(),  # type: ignore[arg-type]
+            self.launcher_state,
         )
 
     def tearDown(self) -> None:
@@ -81,6 +99,8 @@ class DashboardServiceTests(unittest.TestCase):
         self.assertGreaterEqual(len(state["activity"]["events"]), 1)
         self.assertEqual(state["commands"]["commands"][0]["status"], "completed")
         self.assertEqual(state["vscode"]["provider_state"], "ready")
+        self.assertEqual(state["launcher"]["phase"], "ready")
+        self.assertTrue(state["launcher"]["tunnel"]["running"])
 
     def test_local_http_dashboard_and_state_api(self) -> None:
         started = self.service.start()
@@ -91,11 +111,17 @@ class DashboardServiceTests(unittest.TestCase):
             html = response.read().decode("utf-8")
             self.assertEqual(response.status, 200)
             self.assertIn("Local AI Development Bridge", html)
+            self.assertIn("Quick Tunnel", html)
+            self.assertIn("Launcher / Tunnel State", html)
         with urllib.request.urlopen(base + "/api/state", timeout=3) as response:
             payload = json.loads(response.read().decode("utf-8"))
             self.assertEqual(response.status, 200)
             self.assertEqual(payload["task"]["todos"][0]["id"], "a")
             self.assertEqual(payload["system"]["dashboard_host"], "127.0.0.1")
+            self.assertEqual(payload["launcher"]["status"], "ready")
+        with urllib.request.urlopen(base + "/api/launcher", timeout=3) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            self.assertEqual(payload["tunnel"]["hostname"], "dashboard-test.trycloudflare.com")
 
 
 if __name__ == "__main__":
