@@ -30,12 +30,13 @@ Launcher / Tunnel Manager
         ├── local/public MCP smoke tests
         └── .runtime/launcher-state.json
 
-Local read-only Dashboard :8766
+Local Dashboard :8766
         ├── Activity timeline
         ├── Todo / progress journal
         ├── Terminal snapshots
         ├── VS Code readiness
-        └── Launcher / Tunnel / smoke state
+        ├── Launcher / Tunnel / smoke state
+        └── localhost-only approval decisions
 ```
 
 Dashboard 固定绑定 `127.0.0.1`，不会通过 MCP Quick Tunnel 暴露。
@@ -72,6 +73,11 @@ Python Bridge 通过 localhost-only Companion API 获取 VS Code diagnostics、d
 
 LSP 层使用 semantic contract v2：传输层 `provider_state` 与语义查询结果 `semantic_state` 分离；同时返回文档打开状态、语言 ID、warmup retry 与 timeout 信息。这样 `[]` 不再等同于“provider 正常但无内容”，可以区分真正空结果、provider 不可用和超时。旧 Companion response 由 Python Bridge 做兼容规范化。
 
+
+### ApprovalService / Dashboard control boundary
+
+审批门控默认关闭。开启后，敏感工具第一次调用只创建内存中的 approval request，不执行副作用。批准对象通过 `action + canonical payload` SHA-256 fingerprint 绑定，并且 one-time consume。Dashboard 的批准/拒绝是当前唯一写接口；它不通过 MCP Tunnel 暴露，要求独立 ephemeral dashboard token、自定义请求头和同源 Origin。
+
 ## 3. 安全边界
 
 - MCP Server 默认只监听 `127.0.0.1`。
@@ -81,7 +87,7 @@ LSP 层使用 semantic contract v2：传输层 `provider_state` 与语义查询�
 - `.runtime/` 与 `.audit/` 不进入 Git。
 - Activity / Launcher 状态不保存 capability token 或完整 capability URL。
 - `ALLOW_WRITE` 与 `ALLOW_COMMANDS` 独立控制。
-- Dashboard 仅 GET、localhost-only，不提供写文件或执行命令接口。
+- Dashboard localhost-only；唯一 mutation 是 approval approve/deny，不提供直接写文件或执行命令接口。
 
 ## 4. 运行时数据
 

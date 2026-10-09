@@ -160,6 +160,9 @@ $env:BRIDGE_ALLOWED_ORIGINS = "https://xxxx.trycloudflare.com"
 | `BRIDGE_ALLOWED_ORIGINS` | 空 | 追加到 DNS rebinding 保护的 Origin 白名单 |
 | `BRIDGE_LOG_MAX_BYTES` | `5242880` | Activity / Progress / Audit 单个 JSONL 分段最大字节数（默认 5 MiB） |
 | `BRIDGE_LOG_BACKUPS` | `3` | 每类 JSONL 最多保留的轮转备份数量（0–10） |
+| `BRIDGE_CONFIRM_WRITES` | `0` | 是否要求 `write_file` / `apply_patch` 在本机 Dashboard 逐次批准 |
+| `BRIDGE_CONFIRM_COMMANDS` | `0` | 是否要求 `run_command` 在本机 Dashboard 逐次批准 |
+| `BRIDGE_APPROVAL_TTL_SECONDS` | `300` | 待批准请求有效期，范围 30–3600 秒 |
 | `BRIDGE_DASHBOARD_ENABLED` | `1` | 是否启动只读本地可观察性 Dashboard |
 | `BRIDGE_DASHBOARD_PORT` | `8766` | Dashboard 首选 localhost 端口；占用时自动尝试后续端口 |
 
@@ -225,6 +228,36 @@ Dashboard 只提供 GET 只读接口，固定绑定 `127.0.0.1`，与公网 MCP 
 - `dashboard_info`
 
 用于客户端直接查询可观察性状态。
+
+## 本机审批门控
+
+默认行为保持向后兼容：只要 `ALLOW_WRITE=1` / `ALLOW_COMMANDS=1`，对应操作直接执行。需要“人确认后才执行”时，可以在一键启动中开启：
+
+```powershell
+.\start.cmd --confirm-writes --confirm-commands
+```
+
+或使用环境变量：
+
+```powershell
+$env:BRIDGE_CONFIRM_WRITES = "1"
+$env:BRIDGE_CONFIRM_COMMANDS = "1"
+$env:BRIDGE_APPROVAL_TTL_SECONDS = "300"
+```
+
+启用后，`write_file`、`apply_patch`、`run_command` 的第一次调用不会执行实际副作用，而会返回 `approval_required=true` 与一个 `request_id`。本机 Dashboard 的“审批”页会展示动作类型、路径/命令摘要、字节数等脱敏信息。用户选择“批准一次”后，MCP 客户端需要用相同参数重试，并附带 `approval_id=request_id`。
+
+审批具有以下边界：
+
+- 只在内存中存在，Bridge 重启后全部失效；
+- 与动作类型和完整参数 fingerprint 绑定，修改命令/内容/路径后旧批准不可复用；
+- 每个批准只能消费一次；
+- 有 TTL，过期后必须重新申请；
+- Dashboard 仍只监听 `127.0.0.1`，审批 POST 不经过 Quick Tunnel；
+- POST 需要 Dashboard 独立的临时 session token，并校验同源 `Origin`，用于阻断浏览器 CSRF；
+- capability token 与 Dashboard session token 相互独立，均不会出现在 Activity/Launcher 持久日志中。
+
+这使“AI 想执行什么”与“用户是否允许执行”都能直接在可视化控制台看到。
 
 ## PTY 与进程回收
 
@@ -309,7 +342,7 @@ LSP 查询使用 semantic contract v2，不再把所有空数组都视为同一�
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-当前路线见 `ROADMAP.md`，本轮完整优化审查见 `OPTIMIZATION_PLAN.md`。P1 一键启动、P2 CI/Release、P3 LSP semantic contract 与 P4 第一阶段稳定性（PTY 资源释放、日志轮转、Linux/macOS PTY）已实现；下一重点是多工作区与权限确认 UI。
+当前路线见 `ROADMAP.md`，本轮完整优化审查见 `OPTIMIZATION_PLAN.md`。P1 一键启动、P2 CI/Release、P3 LSP semantic contract、P4 稳定性与 P5 本机一次性审批门控已实现；下一重点是多工作区模型。
 
 ## License
 

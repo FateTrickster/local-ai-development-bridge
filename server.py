@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Callable
 from typing import Any, TypeVar
@@ -9,6 +10,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from bridge.activity_service import ActivityService, redact_text
+from bridge.approval_service import ApprovalService
 from bridge.config import Settings
 from bridge.dashboard_service import DashboardService
 from bridge.file_service import FileService
@@ -25,12 +27,13 @@ T = TypeVar("T")
 settings = Settings.from_env()
 guard = WorkspaceGuard(settings.workspace_root)
 activity = ActivityService()
+approvals = ApprovalService(ttl_seconds=settings.approval_ttl_seconds)
 files = FileService(settings, guard)
 patches = PatchService(settings, guard)
 tasks = TaskService()
 terminal = TerminalService(settings, guard, activity=activity)
 vscode_service = VSCodeService(settings, guard)
-dashboard = DashboardService(settings, activity, tasks, terminal, vscode_service)
+dashboard = DashboardService(settings, activity, tasks, terminal, vscode_service, approvals=approvals)
 
 # FastMCP auto-enables DNS rebinding protection when bound to localhost, but its
 # default allowlist only contains 127.0.0.1/localhost/[::1]. A Quick Tunnel reaches
@@ -79,6 +82,59 @@ def _observed(
         details=summary,
     )
     return result
+
+
+def _approval_gate(
+    enabled: bool,
+    approval_id: str | None,
+    action: str,
+    payload: dict[str, Any],
+    *,
+    title: str,
+    details: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not enabled:
+        return None
+    try:
+        pending = approvals.require_or_request(
+            approval_id,
+            action,
+            payload,
+            title=title,
+            details=details,
+        )
+    except Exception as exc:
+        activity.emit(
+            "approval_failed",
+            status="failed",
+            title=f"Approval check failed: {title}",
+            component="approvals",
+            details={"action": action, "error": redact_text(str(exc), 400)},
+        )
+        raise
+    if pending is not None:
+        request = pending.get("approval", {})
+        activity.emit(
+            "approval_requested",
+            status="pending",
+            title=title,
+            component="approvals",
+            details={
+                "request_id": request.get("request_id"),
+                "action": action,
+                "expires_epoch": request.get("expires_epoch"),
+                **details,
+            },
+        )
+        return pending
+    activity.emit(
+        "approval_consumed",
+        status="completed",
+        title=f"Approved: {title}",
+        component="approvals",
+        details={"request_id": approval_id, "action": action, **details},
+    )
+    return None
 
 
 @mcp.tool()
@@ -196,8 +252,23 @@ def search_files(
 
 
 @mcp.tool()
-def write_file(path: str, content: str, expected_version: str | None = None) -> dict[str, Any]:
-    """Create/overwrite UTF-8 text when writes are enabled; optionally enforce a SHA-256 expected version."""
+def write_file(path: str, content: str, expected_version: str | None = None, approval_id: str | None = None) -> dict[str, Any]:
+    """Create/overwrite UTF-8 text; when configured, requires one-time local Dashboard approval."""
+    content_bytes = content.encode("utf-8")
+    gate = _approval_gate(
+        settings.confirm_writes,
+        approval_id,
+        "write_file",
+        {
+            "path": path,
+            "content_sha256": hashlib.sha256(content_bytes).hexdigest(),
+            "expected_version": expected_version,
+        },
+        title=f"Approve file write: {path}",
+        details={"path": path, "bytes_requested": len(content_bytes)},
+    )
+    if gate is not None:
+        return gate
     result = _observed(
         "write_file",
         f"Write file: {path}",
@@ -216,8 +287,21 @@ def write_file(path: str, content: str, expected_version: str | None = None) -> 
 
 
 @mcp.tool()
-def apply_patch(patch: str, expected_versions: dict[str, str | None]) -> dict[str, Any]:
-    """Apply a validated multi-file unified diff transaction using optimistic version checks."""
+def apply_patch(patch: str, expected_versions: dict[str, str | None], approval_id: str | None = None) -> dict[str, Any]:
+    """Apply a validated multi-file unified diff; optionally requires local approval."""
+    gate = _approval_gate(
+        settings.confirm_writes,
+        approval_id,
+        "apply_patch",
+        {
+            "patch_sha256": hashlib.sha256(patch.encode("utf-8")).hexdigest(),
+            "expected_versions": expected_versions,
+        },
+        title="Approve multi-file patch",
+        details={"files": sorted(expected_versions.keys()), "patch_bytes": len(patch.encode("utf-8"))},
+    )
+    if gate is not None:
+        return gate
     result = _observed(
         "apply_patch",
         "Apply multi-file patch",
@@ -244,8 +328,19 @@ def run_command(
     cwd: str = ".",
     background: bool = False,
     timeout_ms: int = 120_000,
+    approval_id: str | None = None,
 ) -> dict[str, Any]:
-    """Run a command in a persistent native PTY; timeout only bounds this call's wait."""
+    """Run a command in a persistent native PTY; optionally requires local approval."""
+    gate = _approval_gate(
+        settings.confirm_commands,
+        approval_id,
+        "run_command",
+        {"command": command, "cwd": cwd, "background": background, "timeout_ms": timeout_ms},
+        title="Approve terminal command",
+        details={"cwd": cwd, "background": background, "command_preview": redact_text(command, 240)},
+    )
+    if gate is not None:
+        return gate
     return _observed(
         "run_command",
         "Run terminal command",
@@ -372,8 +467,11 @@ def dashboard_info() -> dict[str, Any]:
         "host": "127.0.0.1",
         "port": dashboard.port,
         "url": f"http://127.0.0.1:{dashboard.port}/" if dashboard.port is not None else None,
-        "read_only": True,
+        "read_only": False,
+        "actions": "approval_decisions_only",
         "tunnel_exposed": False,
+        "confirm_writes": settings.confirm_writes,
+        "confirm_commands": settings.confirm_commands,
     }
 
 
@@ -483,6 +581,8 @@ if __name__ == "__main__":
             "allow_commands": settings.allow_commands,
             "bridge_host": host,
             "bridge_port": port,
+            "confirm_writes": settings.confirm_writes,
+            "confirm_commands": settings.confirm_commands,
         },
     )
     print(f"Local MCP endpoint: http://{host}:{port}/{token}/mcp")

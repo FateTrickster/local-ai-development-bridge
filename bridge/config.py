@@ -44,6 +44,9 @@ class Settings:
     allowed_origins: tuple[str, ...] = ()
     dashboard_enabled: bool = True
     dashboard_port: int = 8766
+    confirm_writes: bool = False
+    confirm_commands: bool = False
+    approval_ttl_seconds: int = 300
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -64,4 +67,7 @@ class Settings:
             allowed_origins=tuple(_env_list("BRIDGE_ALLOWED_ORIGINS")),
             dashboard_enabled=_env_bool("BRIDGE_DASHBOARD_ENABLED", True),
             dashboard_port=_env_int("BRIDGE_DASHBOARD_PORT", 8766, 1024, 65_535),
+            confirm_writes=_env_bool("BRIDGE_CONFIRM_WRITES", False),
+            confirm_commands=_env_bool("BRIDGE_CONFIRM_COMMANDS", False),
+            approval_ttl_seconds=_env_int("BRIDGE_APPROVAL_TTL_SECONDS", 300, 30, 3600),
         )
