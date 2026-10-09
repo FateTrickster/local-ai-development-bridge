@@ -43,9 +43,33 @@ def _merge_csv(raw: str | None, *values: str) -> str:
     return ",".join(items)
 
 
-def _extra_workspace_specs(args: argparse.Namespace) -> list[dict[str, str]]:
+_WORKSPACE_POLICY_MODES = {
+    "inherit": (None, None),
+    "readonly": (False, False),
+    "write": (True, False),
+    "command": (False, True),
+    "full": (True, True),
+}
+
+
+def _workspace_policy_map(args: argparse.Namespace) -> dict[str, str]:
+    policies: dict[str, str] = {}
+    for raw in list(getattr(args, "workspace_policy", None) or []):
+        value = str(raw).strip()
+        if "=" not in value:
+            raise ValueError(f"INVALID_WORKSPACE_POLICY: {value!r}; expected ID=MODE")
+        workspace_id, mode = (part.strip() for part in value.split("=", 1))
+        if not workspace_id or mode not in _WORKSPACE_POLICY_MODES:
+            raise ValueError(f"INVALID_WORKSPACE_POLICY: {value!r}")
+        if workspace_id in policies:
+            raise ValueError(f"DUPLICATE_WORKSPACE_POLICY: {workspace_id}")
+        policies[workspace_id] = mode
+    return policies
+
+
+def _extra_workspace_specs(args: argparse.Namespace) -> list[dict[str, Any]]:
     raw_items = list(getattr(args, "extra_workspace", None) or [])
-    specs: list[dict[str, str]] = []
+    specs: list[dict[str, Any]] = []
     for raw in raw_items:
         value = str(raw).strip()
         if "=" not in value:
@@ -56,7 +80,20 @@ def _extra_workspace_specs(args: argparse.Namespace) -> list[dict[str, str]]:
         if not workspace_id or not workspace_path:
             raise ValueError(f"INVALID_EXTRA_WORKSPACE: {value!r}; expected ID=PATH")
         specs.append({"id": workspace_id, "name": workspace_id, "path": workspace_path})
+
     normalized = parse_extra_workspaces(json.dumps(specs, ensure_ascii=False))
+    policies = _workspace_policy_map(args)
+    configured_ids = {str(item["id"]) for item in normalized}
+    unknown = sorted(set(policies) - configured_ids)
+    if unknown:
+        raise ValueError(f"WORKSPACE_POLICY_UNKNOWN_ID: {','.join(unknown)}")
+    for item in normalized:
+        mode = policies.get(str(item["id"]), "inherit")
+        allow_write, allow_commands = _WORKSPACE_POLICY_MODES[mode]
+        item["policy_mode"] = mode
+        item["allow_write"] = allow_write
+        item["allow_commands"] = allow_commands
+
     default_root = Path(args.workspace).expanduser().resolve()
     for item in normalized:
         candidate = Path(item["path"]).resolve()
@@ -405,6 +442,13 @@ def build_parser() -> argparse.ArgumentParser:
     def add_common(target: argparse.ArgumentParser) -> None:
         target.add_argument("--workspace", default=str(ROOT.parent), help="Default workspace root exposed through MCP")
         target.add_argument("--extra-workspace", action="append", default=[], metavar="ID=PATH", help="Add an explicit extra workspace; may be repeated")
+        target.add_argument(
+            "--workspace-policy",
+            action="append",
+            default=[],
+            metavar="ID=MODE",
+            help="Restrict an extra workspace: inherit|readonly|write|command|full; may be repeated",
+        )
         target.add_argument("--bridge-port", type=int, default=int(os.environ.get("BRIDGE_PORT", DEFAULT_BRIDGE_PORT)))
         target.add_argument("--dashboard-port", type=int, default=int(os.environ.get("BRIDGE_DASHBOARD_PORT", DEFAULT_DASHBOARD_PORT)))
         target.add_argument("--cloudflared", default=os.environ.get("CLOUDFLARED_PATH") or None)

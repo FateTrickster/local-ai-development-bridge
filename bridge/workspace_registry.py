@@ -30,6 +30,9 @@ class WorkspaceContext:
     patches: PatchService
     terminal: TerminalService
     vscode: VSCodeService
+    policy_mode: str = "inherit"
+    requested_allow_write: bool | None = None
+    requested_allow_commands: bool | None = None
 
     def public_info(self) -> dict[str, Any]:
         return {
@@ -38,6 +41,9 @@ class WorkspaceContext:
             "workspace_root": str(self.root),
             "allow_write": self.settings.allow_write,
             "allow_commands": self.settings.allow_commands,
+            "policy_mode": self.policy_mode,
+            "requested_allow_write": self.requested_allow_write,
+            "requested_allow_commands": self.requested_allow_commands,
         }
 
 
@@ -61,7 +67,21 @@ def _paths_overlap(left: Path, right: Path) -> bool:
     return common_key in {left_key, right_key}
 
 
-def parse_extra_workspaces(raw: str | None) -> list[dict[str, str]]:
+def _policy_mode(allow_write: bool | None, allow_commands: bool | None) -> str:
+    if allow_write is None and allow_commands is None:
+        return "inherit"
+    write = True if allow_write is None else allow_write
+    commands = True if allow_commands is None else allow_commands
+    if not write and not commands:
+        return "readonly"
+    if write and not commands:
+        return "write"
+    if not write and commands:
+        return "command"
+    return "full"
+
+
+def parse_extra_workspaces(raw: str | None) -> list[dict[str, Any]]:
     """Parse BRIDGE_WORKSPACES_JSON into normalized extra-workspace specs.
 
     The primary workspace always comes from WORKSPACE_ROOT and has id `default`.
@@ -79,7 +99,7 @@ def parse_extra_workspaces(raw: str | None) -> list[dict[str, str]]:
     if len(parsed) > 32:
         raise ValueError("TOO_MANY_WORKSPACES")
 
-    result: list[dict[str, str]] = []
+    result: list[dict[str, Any]] = []
     seen_ids = {"default"}
     seen_roots: list[Path] = []
     for item in parsed:
@@ -97,9 +117,22 @@ def parse_extra_workspaces(raw: str | None) -> list[dict[str, str]]:
         if any(_paths_overlap(root, existing) for existing in seen_roots):
             raise ValueError(f"OVERLAPPING_WORKSPACE_ROOT: {root}")
         name = str(item.get("name") or workspace_id).strip()[:120] or workspace_id
+        requested_write = item.get("allow_write") if "allow_write" in item else None
+        requested_commands = item.get("allow_commands") if "allow_commands" in item else None
+        if requested_write is not None and not isinstance(requested_write, bool):
+            raise ValueError(f"INVALID_WORKSPACE_ALLOW_WRITE: {workspace_id}")
+        if requested_commands is not None and not isinstance(requested_commands, bool):
+            raise ValueError(f"INVALID_WORKSPACE_ALLOW_COMMANDS: {workspace_id}")
         seen_ids.add(workspace_id)
         seen_roots.append(root)
-        result.append({"id": workspace_id, "name": name, "path": str(root)})
+        result.append({
+            "id": workspace_id,
+            "name": name,
+            "path": str(root),
+            "allow_write": requested_write,
+            "allow_commands": requested_commands,
+            "policy_mode": _policy_mode(requested_write, requested_commands),
+        })
     return result
 
 
@@ -115,7 +148,7 @@ class WorkspaceRegistry:
         settings: Settings,
         *,
         activity: ActivityService | None = None,
-        extra_workspaces: list[dict[str, str]] | None = None,
+        extra_workspaces: list[dict[str, Any]] | None = None,
         vscode_data_dir: Path | None = None,
     ):
         self.base_settings = settings
@@ -133,6 +166,8 @@ class WorkspaceRegistry:
                 _normalize_workspace_id(spec["id"]),
                 str(spec.get("name") or spec["id"]),
                 Path(spec["path"]),
+                allow_write=spec.get("allow_write"),
+                allow_commands=spec.get("allow_commands"),
                 vscode_data_dir=vscode_data_dir,
             )
 
@@ -153,6 +188,8 @@ class WorkspaceRegistry:
         name: str,
         root: Path,
         *,
+        allow_write: bool | None = None,
+        allow_commands: bool | None = None,
         vscode_data_dir: Path | None,
     ) -> None:
         workspace_id = _normalize_workspace_id(workspace_id)
@@ -163,13 +200,23 @@ class WorkspaceRegistry:
             raise ValueError(f"DUPLICATE_WORKSPACE_ID: {workspace_id}")
         if any(_paths_overlap(root, existing) for existing in self._roots):
             raise ValueError(f"OVERLAPPING_WORKSPACE_ROOT: {root}")
-        context_settings = replace(self.base_settings, workspace_root=root)
+        effective_write = self.base_settings.allow_write and (allow_write is not False)
+        effective_commands = self.base_settings.allow_commands and (allow_commands is not False)
+        context_settings = replace(
+            self.base_settings,
+            workspace_root=root,
+            allow_write=effective_write,
+            allow_commands=effective_commands,
+        )
         guard = WorkspaceGuard(root)
         context = WorkspaceContext(
             workspace_id=workspace_id,
             name=str(name).strip()[:120] or workspace_id,
             root=root,
             settings=context_settings,
+            policy_mode=_policy_mode(allow_write, allow_commands),
+            requested_allow_write=allow_write,
+            requested_allow_commands=allow_commands,
             guard=guard,
             files=FileService(context_settings, guard),
             patches=PatchService(context_settings, guard),
@@ -194,6 +241,8 @@ class WorkspaceRegistry:
         items: list[dict[str, Any]] = []
         for context in self._contexts.values():
             info = context.public_info()
+            info["global_allow_write"] = self.base_settings.allow_write
+            info["global_allow_commands"] = self.base_settings.allow_commands
             if include_vscode:
                 health = context.vscode.health()
                 info["vscode"] = {
@@ -215,6 +264,11 @@ class WorkspaceRegistry:
             "workspace_id": context.workspace_id,
             "workspace_name": context.name,
             "available_workspaces": len(self._contexts),
+            "policy_mode": context.policy_mode,
+            "requested_allow_write": context.requested_allow_write,
+            "requested_allow_commands": context.requested_allow_commands,
+            "global_allow_write": self.base_settings.allow_write,
+            "global_allow_commands": self.base_settings.allow_commands,
         }
 
     def _terminal_for_command(self, command_id: str) -> tuple[WorkspaceContext, TerminalService]:

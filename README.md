@@ -151,7 +151,7 @@ $env:BRIDGE_ALLOWED_ORIGINS = "https://xxxx.trycloudflare.com"
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `WORKSPACE_ROOT` | 当前目录的上级 | 默认工作区根，所有相对路径不得越出该根 |
-| `BRIDGE_WORKSPACES_JSON` | 空 | 额外工作区 JSON 数组；推荐由 Launcher `--extra-workspace ID=PATH` 自动生成 |
+| `BRIDGE_WORKSPACES_JSON` | 空 | 额外工作区 JSON 数组，可包含 `allow_write` / `allow_commands`；推荐由 Launcher 管理 |
 | `ALLOW_WRITE` | `0` | 是否允许 `write_file` / `apply_patch` |
 | `ALLOW_COMMANDS` | `0` | 是否允许 `run_command` |
 | `BRIDGE_HOST` | `127.0.0.1` | MCP 监听地址 |
@@ -164,7 +164,7 @@ $env:BRIDGE_ALLOWED_ORIGINS = "https://xxxx.trycloudflare.com"
 | `BRIDGE_CONFIRM_WRITES` | `0` | 是否要求 `write_file` / `apply_patch` 在本机 Dashboard 逐次批准 |
 | `BRIDGE_CONFIRM_COMMANDS` | `0` | 是否要求 `run_command` 在本机 Dashboard 逐次批准 |
 | `BRIDGE_APPROVAL_TTL_SECONDS` | `300` | 待批准请求有效期，范围 30–3600 秒 |
-| `BRIDGE_DASHBOARD_ENABLED` | `1` | 是否启动只读本地可观察性 Dashboard |
+| `BRIDGE_DASHBOARD_ENABLED` | `1` | 是否启动 localhost-only 可观察性/审批 Dashboard |
 | `BRIDGE_DASHBOARD_PORT` | `8766` | Dashboard 首选 localhost 端口；占用时自动尝试后续端口 |
 
 ## 权限
@@ -203,7 +203,34 @@ MCP 新增 `list_workspaces`；文件、搜索、Patch、终端和 VS Code 工�
 - Activity、终端快照和 Dashboard 显示 `workspace_id`；
 - 写入/命令审批 fingerprint 包含 `workspace_id`，批准不能跨工作区复用。
 
-Dashboard 增加“工作区”页，可同时查看各 workspace root、权限和 VS Code readiness。
+Dashboard 增加“工作区”页，可同时查看各 workspace root、有效权限、策略模式和 VS Code readiness。
+
+### 工作区级权限策略
+
+全局 `ALLOW_WRITE` / `ALLOW_COMMANDS` 始终是硬上限；workspace policy **只能收紧权限，不能提升权限**。例如全局只读时，即使某额外 workspace 配置为 `full`，其有效写入/命令权限仍然是关闭。
+
+Launcher 可为额外工作区指定策略：
+
+```powershell
+.\start.cmd `
+  --workspace D:\Projects\main `
+  --extra-workspace docs=D:\Docs `
+  --extra-workspace scripts=D:\Scripts `
+  --workspace-policy docs=readonly `
+  --workspace-policy scripts=command
+```
+
+支持模式：
+
+| 模式 | 含义 |
+| --- | --- |
+| `inherit` | 继承全局权限（默认） |
+| `readonly` | 禁止写入、禁止命令 |
+| `write` | 允许写入、禁止命令（仍受全局上限） |
+| `command` | 禁止写入、允许命令（仍受全局上限） |
+| `full` | 请求写入与命令两项权限，但仍不能突破全局上限 |
+
+受 workspace policy 禁止的写入或命令会在创建本机审批请求之前直接返回 `WRITES_DISABLED_FOR_WORKSPACE` / `COMMANDS_DISABLED_FOR_WORKSPACE`，避免出现“用户批准了一个实际上永远不能执行的操作”。审批 fingerprint 本身也包含 `workspace_id`，批准不能跨工作区复用。
 
 ## 安全修改机制
 
@@ -228,7 +255,7 @@ version: sha256:...
 
 ## 可观察性 Dashboard
 
-Bridge 启动时默认同时启动本地只读 Dashboard：
+Bridge 启动时默认同时启动 localhost-only Dashboard：
 
 ```text
 http://127.0.0.1:8766/
@@ -367,7 +394,7 @@ LSP 查询使用 semantic contract v2，不再把所有空数组都视为同一�
 .venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-当前路线见 `ROADMAP.md`，本轮完整优化审查见 `OPTIMIZATION_PLAN.md`。一键启动、CI/Release、LSP semantic contract、跨平台稳定性、本机一次性审批门控与显式多工作区模型均已实现；下一重点是更细的进程树/资源使用统计与工作区级策略配置。
+当前路线见 `ROADMAP.md`，本轮完整优化审查见 `OPTIMIZATION_PLAN.md`。一键启动、CI/Release、LSP semantic contract、跨平台稳定性、本机一次性审批门控、显式多工作区模型与工作区级权限策略均已实现；下一重点是更细的进程树/CPU/内存可观察性，以及 Dashboard 的工作区过滤与检索。
 
 ## License
 

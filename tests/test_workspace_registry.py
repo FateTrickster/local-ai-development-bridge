@@ -94,5 +94,70 @@ class WorkspaceRegistryTests(unittest.TestCase):
             )
 
 
+    def test_workspace_policy_can_only_restrict_global_permissions(self) -> None:
+        base = Path(self.temp.name)
+        readonly_root = base / "readonly"
+        write_root = base / "write-only"
+        readonly_root.mkdir()
+        write_root.mkdir()
+        registry = WorkspaceRegistry(
+            self.settings,
+            extra_workspaces=[
+                {"id": "ro", "path": str(readonly_root), "allow_write": False, "allow_commands": False, "policy_mode": "readonly"},
+                {"id": "write", "path": str(write_root), "allow_write": True, "allow_commands": False, "policy_mode": "write"},
+            ],
+        )
+        try:
+            ro = registry.get("ro")
+            write = registry.get("write")
+            self.assertFalse(ro.settings.allow_write)
+            self.assertFalse(ro.settings.allow_commands)
+            self.assertTrue(write.settings.allow_write)
+            self.assertFalse(write.settings.allow_commands)
+            with self.assertRaisesRegex(PermissionError, "WRITES_DISABLED"):
+                ro.files.write_file("blocked.txt", "x")
+            with self.assertRaisesRegex(PermissionError, "COMMANDS_DISABLED"):
+                write.terminal.run_command("echo blocked")
+            write.files.write_file("allowed.txt", "ok")
+            self.assertEqual((write_root / "allowed.txt").read_text(encoding="utf-8"), "ok")
+        finally:
+            registry.shutdown(timeout=3.0)
+
+    def test_workspace_policy_cannot_elevate_global_readonly(self) -> None:
+        base = Path(self.temp.name)
+        extra = base / "global-cap"
+        extra.mkdir()
+        readonly_settings = Settings(
+            workspace_root=self.default_root,
+            allow_write=False,
+            allow_commands=False,
+            max_read_bytes=262_144,
+            max_search_results=500,
+            max_search_bytes=262_144,
+            max_directory_entries=500,
+        )
+        registry = WorkspaceRegistry(
+            readonly_settings,
+            extra_workspaces=[
+                {"id": "full", "path": str(extra), "allow_write": True, "allow_commands": True, "policy_mode": "full"},
+            ],
+        )
+        try:
+            context = registry.get("full")
+            self.assertFalse(context.settings.allow_write)
+            self.assertFalse(context.settings.allow_commands)
+            info = registry.list_workspaces()["workspaces"][1]
+            self.assertEqual(info["policy_mode"], "full")
+            self.assertTrue(info["requested_allow_write"])
+            self.assertFalse(info["allow_write"])
+            self.assertFalse(info["global_allow_write"])
+        finally:
+            registry.shutdown(timeout=3.0)
+
+    def test_parse_extra_workspace_rejects_non_boolean_permissions(self) -> None:
+        with self.assertRaisesRegex(ValueError, "INVALID_WORKSPACE_ALLOW_WRITE"):
+            parse_extra_workspaces(json.dumps([{"id": "docs2", "path": str(self.docs_root), "allow_write": "yes"}]))
+
+
 if __name__ == "__main__":
     unittest.main()

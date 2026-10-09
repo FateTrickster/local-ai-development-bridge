@@ -161,7 +161,18 @@
 - Launcher `--extra-workspace ID=PATH` 与 `BRIDGE_WORKSPACES_JSON`；
 - 多工作区 MCP + Dashboard E2E smoke。
 
-下一步：工作区级权限策略、进程树/CPU/内存统计，以及更细的 Dashboard 过滤与检索。
+## P2.6：工作区级权限策略（已完成）
+
+- 全局 `ALLOW_WRITE` / `ALLOW_COMMANDS` 作为不可突破的权限上限；
+- extra workspace 支持 `inherit / readonly / write / command / full`；
+- `WorkspaceRegistry` 计算 effective permissions 并给每个 service context 注入；
+- 禁止操作在 approval gate 之前返回 workspace-specific denial；
+- approval fingerprint 已包含 workspace_id，不可跨 workspace 复用；
+- Dashboard 显示 policy mode、有效权限与全局上限；
+- Launcher `--workspace-policy ID=MODE`；
+- 单元测试与真实 MCP/Launcher E2E 验证。
+
+下一步：进程树/CPU/内存统计，以及更细的 Dashboard workspace/event 过滤与检索。
 
 ## E2E
 

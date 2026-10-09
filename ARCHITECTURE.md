@@ -49,6 +49,8 @@ Dashboard 固定绑定 `127.0.0.1`，不会通过 MCP Quick Tunnel 暴露。
 
 终端 command_id 由 Registry 反向定位所属 workspace；Dashboard 对命令和 VS Code health 做跨 workspace 聚合。审批 fingerprint 和 Activity details 同样携带 workspace_id，防止批准或审计语义跨工作区混淆。
 
+每个 extra workspace 还可以声明 `allow_write` / `allow_commands`。有效权限计算遵循 `global_permission AND workspace_policy`：全局权限是硬上限，workspace 只能继续收紧，不能反向提升。`inherit` 不做额外限制；`readonly/write/command/full` 由 Launcher 规范化为两项布尔策略。
+
 ### WorkspaceGuard
 
 所有工作区路径先 `resolve`，再检查目标仍位于 `WORKSPACE_ROOT` 内。禁止 `..` 越界和工作区外符号链接逃逸。
@@ -92,7 +94,7 @@ LSP 层使用 semantic contract v2：传输层 `provider_state` 与语义查询�
 - capability URL 与 Bearer token 均可认证；未授权路径返回 404。
 - `.runtime/` 与 `.audit/` 不进入 Git。
 - Activity / Launcher 状态不保存 capability token 或完整 capability URL。
-- `ALLOW_WRITE` 与 `ALLOW_COMMANDS` 独立控制；当前权限策略由所有 workspace 继承，workspace 选择本身不能提升权限。
+- `ALLOW_WRITE` 与 `ALLOW_COMMANDS` 独立控制，并作为所有 workspace 的硬上限；workspace policy 只能收紧，不能提升。
 - 每个 workspace 使用独立 root guard；跨 workspace 访问必须显式切换 `workspace_id`，不能通过路径穿越。
 - Dashboard localhost-only；唯一 mutation 是 approval approve/deny，不提供直接写文件或执行命令接口。
 

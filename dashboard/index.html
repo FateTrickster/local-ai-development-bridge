@@ -245,7 +245,9 @@
       const health=healthById.get(item.workspace_id)||{};
       head.append(title,badge(health.provider_state==='ready'?'ready':'not_ready')); wrap.append(head);
       const meta=document.createElement('div'); meta.className='event-details';
-      meta.textContent=`${item.workspace_root||'—'}\n写入 ${item.allow_write?'Enabled':'Disabled'} · 命令 ${item.allow_commands?'Enabled':'Disabled'} · VS Code ${health.provider_state||'unknown'}`;
+      const policy=item.policy_mode||'inherit';
+      const ceiling=`全局上限 W:${item.global_allow_write?'on':'off'} C:${item.global_allow_commands?'on':'off'}`;
+      meta.textContent=`${item.workspace_root||'—'}\n策略 ${policy} · 写入 ${item.allow_write?'Enabled':'Disabled'} · 命令 ${item.allow_commands?'Enabled':'Disabled'} · ${ceiling} · VS Code ${health.provider_state||'unknown'}`;
       wrap.append(meta); box.append(wrap); host.append(box);
     });
   }

@@ -6,6 +6,7 @@ All notable changes to this project will be documented here.
 
 ### Added
 
+- Per-workspace permission policies (`inherit`, `readonly`, `write`, `command`, `full`) with global write/command permissions as a hard ceiling and Launcher `--workspace-policy ID=MODE`.
 - Explicit multi-workspace registry with backward-compatible `default` workspace, workspace-scoped file/patch/PTY/VS Code operations, Dashboard aggregation, and Launcher `--extra-workspace ID=PATH`.
 - Optional localhost-only human approval gate for file writes, patches and terminal commands, with one-time fingerprint-bound approvals, TTL and CSRF-resistant Dashboard decisions.
 - Cross-platform persistent PTY backend for Linux/macOS using the Python standard library, with the same command lifecycle exposed on Windows.
@@ -19,7 +20,6 @@ All notable changes to this project will be documented here.
 
 ### Planned
 
-- workspace-level permission policies
 - process-tree and CPU/memory observability
 - richer Dashboard filtering and search
 
